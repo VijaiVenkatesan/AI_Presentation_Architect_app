@@ -23,11 +23,11 @@ def get_available_groq_models(_client):
         st.warning(f"Could not fetch live model list. Using a fallback. Error: {e}")
         return ["llama3-70b-8192", "llama3-8b-8192", "mixtral-8x7b-32768", "gemma2-9b-it"]
 
-# --- Core Presentation Logic (with Final Templating Fix) ---
+# --- Core Presentation Logic (with Final Content Population Fix) ---
 def create_presentation_from_template(template_file, title, content_bullets):
     """
-    Creates a new presentation by using the uploaded file as a true template.
-    This version correctly deletes all existing slides before adding new ones.
+    Creates a new presentation using the uploaded file as a true template.
+    This version correctly deletes all existing slides and correctly populates the new content.
     """
     try:
         prs = Presentation(template_file)
@@ -35,24 +35,15 @@ def create_presentation_from_template(template_file, title, content_bullets):
         st.error(f"❌ Error reading the template file: {e}")
         return None
 
-    # --- CRUCIAL FIX: Correctly delete all existing slides ---
     try:
-        # Access the underlying XML slide list
         sldIdLst = prs.slides._sldIdLst
-
-        # Create a list of relationship IDs to remove
         rIds_to_remove = [sldId.rId for sldId in sldIdLst]
-
-        # Remove all relationships to the slides from the presentation part
         for rId in rIds_to_remove:
             prs.part.drop_rel(rId)
-
-        # Clear the slide ID list to empty the presentation
         sldIdLst.clear()
     except Exception as e:
         st.error(f"❌ Could not clean the template file. Error: {e}")
         return None
-    # --- END OF CRUCIAL FIX ---
 
     # Add New Title Slide (using Layout 0)
     if len(prs.slide_layouts) > 0:
@@ -68,9 +59,25 @@ def create_presentation_from_template(template_file, title, content_bullets):
         slide = prs.slides.add_slide(prs.slide_layouts[1])
         if slide.shapes.title: slide.shapes.title.text = "Key Discussion Points"
         try:
-            body_shape = slide.placeholders[1]; tf = body_shape.text_frame; tf.clear()
-            for bullet in content_bullets: p = tf.add_paragraph(); p.text = bullet; p.level = 0
-        except (KeyError, IndexError): st.warning("⚠️ Your template's content layout is non-standard.")
+            body_shape = slide.placeholders[1]
+            tf = body_shape.text_frame
+            tf.clear()  # This removes all paragraphs but leaves one.
+
+            # --- CRUCIAL FIX: Reuse the first paragraph for the first bullet ---
+            if content_bullets:
+                p = tf.paragraphs[0]
+                p.text = content_bullets[0]
+                p.level = 0
+                
+                # Add new paragraphs for the rest of the bullet points
+                for bullet_text in content_bullets[1:]:
+                    p = tf.add_paragraph()
+                    p.text = bullet_text
+                    p.level = 0
+            # --- END OF CRUCIAL FIX ---
+                    
+        except (KeyError, IndexError):
+            st.warning("⚠️ Your template's content layout is non-standard. Could not add bullet points.")
     else:
         st.error("❌ Your template needs at least two layouts (Title, Content)."); return None
 
