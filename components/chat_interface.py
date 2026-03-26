@@ -32,13 +32,13 @@ def render_chat_interface(llm_handler: LLMHandler, model: str, on_generate: Opti
             if role == 'user':
                 st.markdown(f"""
                 <div style="background:linear-gradient(135deg,#6366F1,#8B5CF6);padding:1rem;border-radius:12px;margin:0.5rem 0 0.5rem 20%;">
-                    <p style="margin:0;color:white;">{content[:200]}...</p>
+                    <p style="margin:0;color:white;">{content[:200]}{'...' if len(content) > 200 else ''}</p>
                 </div>
                 """, unsafe_allow_html=True)
             else:
                 st.markdown(f"""
                 <div style="background:#1E293B;padding:1rem;border-radius:12px;margin:0.5rem 20% 0.5rem 0;border:1px solid #334155;">
-                    <p style="margin:0;color:#F8FAFC;">{content[:200]}...</p>
+                    <p style="margin:0;color:#F8FAFC;">{content[:200]}{'...' if len(content) > 200 else ''}</p>
                 </div>
                 """, unsafe_allow_html=True)
     
