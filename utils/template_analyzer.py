@@ -1,5 +1,5 @@
 """
-Template Analyzer Module - Enhanced Version
+Template Analyzer Module - Enhanced Version (Fixed)
 Extracts ALL styling, layout, logos, and design elements from uploaded templates
 """
 
@@ -14,7 +14,6 @@ from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.dml import MSO_THEME_COLOR
-from pptx.oxml.ns import qn
 from collections import Counter
 import colorsys
 
@@ -24,8 +23,8 @@ class TemplateAnalyzer:
     
     def __init__(self):
         self.template_data = self._get_default_template()
-        self.original_pptx = None  # Store original presentation
-        self.extracted_images = {}  # Store logos and images
+        self.original_pptx = None
+        self.extracted_images = {}
         self.background_fill = None
         self.master_slides = []
     
@@ -52,7 +51,7 @@ class TemplateAnalyzer:
             'logo_image': None,
             'logo_position': {'left': 0.3, 'top': 0.3, 'width': 1.5, 'height': 0.75},
             'background': {
-                'type': 'solid',  # solid, gradient, image
+                'type': 'solid',
                 'color': '#0F172A',
                 'gradient_colors': [],
                 'image': None
@@ -85,7 +84,7 @@ class TemplateAnalyzer:
                 'height': prs.slide_height.inches
             }
             
-            # Extract from slide masters (most important for branding)
+            # Extract from slide masters
             self._extract_master_styles(prs)
             
             # Extract from actual slides
@@ -94,15 +93,19 @@ class TemplateAnalyzer:
             layouts = []
             
             for slide_idx, slide in enumerate(prs.slides):
-                slide_analysis = self._analyze_slide_complete(slide, slide_idx)
-                colors.extend(slide_analysis['colors'])
-                fonts.extend(slide_analysis['fonts'])
-                layouts.append(slide_analysis['layout'])
-                
-                # Extract logo from first slide (usually title slide)
-                if slide_idx == 0:
-                    self._extract_logo(slide)
-                    self._extract_background(slide)
+                try:
+                    slide_analysis = self._analyze_slide_complete(slide, slide_idx)
+                    colors.extend(slide_analysis['colors'])
+                    fonts.extend(slide_analysis['fonts'])
+                    layouts.append(slide_analysis['layout'])
+                    
+                    # Extract logo from first slide
+                    if slide_idx == 0:
+                        self._extract_logo(slide)
+                        self._extract_background(slide)
+                except Exception as e:
+                    print(f"Error analyzing slide {slide_idx}: {e}")
+                    continue
             
             # Process extracted data
             self._process_colors(colors)
@@ -132,57 +135,68 @@ class TemplateAnalyzer:
                 }
                 
                 # Extract master background
-                if hasattr(master, 'background'):
-                    bg = master.background
-                    if bg.fill.type is not None:
-                        master_info['background'] = self._extract_fill_info(bg.fill)
-                        if master_info['background']:
-                            self.template_data['background'] = master_info['background']
+                try:
+                    if hasattr(master, 'background') and master.background:
+                        bg = master.background
+                        if hasattr(bg, 'fill') and bg.fill and bg.fill.type is not None:
+                            master_info['background'] = self._extract_fill_info(bg.fill)
+                            if master_info['background']:
+                                self.template_data['background'] = master_info['background']
+                except Exception as e:
+                    print(f"Error extracting master background: {e}")
                 
-                # Extract shapes from master (logos, headers, footers)
-                for shape in master.shapes:
-                    shape_info = self._extract_shape_complete(shape)
-                    master_info['shapes'].append(shape_info)
-                    
-                    # Check if it's a logo (small image in corner)
-                    if shape_info.get('type') == 'picture':
-                        if shape_info.get('top', 0) < 1 or shape_info.get('top', 0) > 6:
-                            # Likely a logo (top or bottom)
-                            self._extract_image_from_shape(shape, 'logo')
+                # Extract shapes from master
+                try:
+                    for shape in master.shapes:
+                        shape_info = self._extract_shape_complete(shape)
+                        master_info['shapes'].append(shape_info)
+                        
+                        # Check if it's a logo
+                        if shape_info.get('type') == 'picture':
+                            if shape_info.get('top', 0) < 1 or shape_info.get('top', 0) > 6:
+                                self._extract_image_from_shape(shape, 'logo')
+                except Exception as e:
+                    print(f"Error extracting master shapes: {e}")
                 
                 # Extract layouts
-                for layout in master.slide_layouts:
-                    layout_info = {
-                        'name': layout.name,
-                        'placeholders': []
-                    }
-                    
-                    for placeholder in layout.placeholders:
-                        ph_info = {
-                            'type': str(placeholder.placeholder_format.type),
-                            'idx': placeholder.placeholder_format.idx,
-                            'left': placeholder.left.inches if placeholder.left else 0,
-                            'top': placeholder.top.inches if placeholder.top else 0,
-                            'width': placeholder.width.inches if placeholder.width else 0,
-                            'height': placeholder.height.inches if placeholder.height else 0
+                try:
+                    for layout in master.slide_layouts:
+                        layout_info = {
+                            'name': layout.name,
+                            'placeholders': []
                         }
                         
-                        # Extract font from placeholder
-                        if hasattr(placeholder, 'text_frame'):
-                            for para in placeholder.text_frame.paragraphs:
-                                if para.runs:
-                                    run = para.runs[0]
-                                    ph_info['font'] = {
-                                        'name': run.font.name,
-                                        'size': run.font.size.pt if run.font.size else None,
-                                        'bold': run.font.bold,
-                                        'color': self._get_font_color(run.font)
-                                    }
-                                    break
+                        for placeholder in layout.placeholders:
+                            try:
+                                ph_info = {
+                                    'type': str(placeholder.placeholder_format.type) if placeholder.placeholder_format else 'unknown',
+                                    'idx': placeholder.placeholder_format.idx if placeholder.placeholder_format else 0,
+                                    'left': placeholder.left.inches if placeholder.left else 0,
+                                    'top': placeholder.top.inches if placeholder.top else 0,
+                                    'width': placeholder.width.inches if placeholder.width else 0,
+                                    'height': placeholder.height.inches if placeholder.height else 0
+                                }
+                                
+                                # Extract font from placeholder
+                                if hasattr(placeholder, 'text_frame') and placeholder.text_frame:
+                                    for para in placeholder.text_frame.paragraphs:
+                                        if para.runs:
+                                            run = para.runs[0]
+                                            ph_info['font'] = {
+                                                'name': run.font.name,
+                                                'size': run.font.size.pt if run.font.size else None,
+                                                'bold': run.font.bold,
+                                                'color': self._get_font_color(run.font)
+                                            }
+                                            break
+                                
+                                layout_info['placeholders'].append(ph_info)
+                            except Exception as e:
+                                continue
                         
-                        layout_info['placeholders'].append(ph_info)
-                    
-                    master_info['layouts'].append(layout_info)
+                        master_info['layouts'].append(layout_info)
+                except Exception as e:
+                    print(f"Error extracting layouts: {e}")
                 
                 self.template_data['master_layouts'].append(master_info)
                 
@@ -194,7 +208,7 @@ class TemplateAnalyzer:
         try:
             for shape in slide.shapes:
                 if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-                    # Check if it's likely a logo (small, in corner)
+                    # Check if it's likely a logo
                     left = shape.left.inches if shape.left else 0
                     top = shape.top.inches if shape.top else 0
                     width = shape.width.inches if shape.width else 0
@@ -222,7 +236,7 @@ class TemplateAnalyzer:
     def _extract_image_from_shape(self, shape, image_type: str) -> Optional[bytes]:
         """Extract image bytes from a picture shape"""
         try:
-            if hasattr(shape, 'image'):
+            if hasattr(shape, 'image') and shape.image:
                 image_bytes = shape.image.blob
                 self.extracted_images[image_type] = image_bytes
                 return image_bytes
@@ -233,9 +247,9 @@ class TemplateAnalyzer:
     def _extract_background(self, slide):
         """Extract background from slide"""
         try:
-            if hasattr(slide, 'background'):
+            if hasattr(slide, 'background') and slide.background:
                 bg = slide.background
-                if bg.fill.type is not None:
+                if hasattr(bg, 'fill') and bg.fill and bg.fill.type is not None:
                     bg_info = self._extract_fill_info(bg.fill)
                     if bg_info:
                         self.template_data['background'] = bg_info
@@ -247,39 +261,38 @@ class TemplateAnalyzer:
         try:
             fill_info = {'type': 'solid', 'color': '#0F172A'}
             
-            if fill.type is not None:
-                fill_type = str(fill.type)
-                
-                if 'SOLID' in fill_type:
-                    fill_info['type'] = 'solid'
+            if fill is None or fill.type is None:
+                return fill_info
+            
+            fill_type = str(fill.type)
+            
+            if 'SOLID' in fill_type:
+                fill_info['type'] = 'solid'
+                try:
                     if fill.fore_color and fill.fore_color.rgb:
                         fill_info['color'] = self._rgb_to_hex(fill.fore_color.rgb)
-                
-                elif 'GRADIENT' in fill_type:
-                    fill_info['type'] = 'gradient'
-                    fill_info['gradient_colors'] = []
-                    try:
-                        for stop in fill.gradient_stops:
-                            if stop.color and stop.color.rgb:
-                                fill_info['gradient_colors'].append(
-                                    self._rgb_to_hex(stop.color.rgb)
-                                )
-                    except:
-                        pass
-                
-                elif 'PICTURE' in fill_type or 'BACKGROUND' in fill_type:
-                    fill_info['type'] = 'image'
-                    # Try to extract background image
-                    try:
-                        if hasattr(fill, '_fill'):
-                            blip = fill._fill.find(qn('a:blip'))
-                            if blip is not None:
-                                fill_info['has_image'] = True
-                    except:
-                        pass
+                except:
+                    pass
+            
+            elif 'GRADIENT' in fill_type:
+                fill_info['type'] = 'gradient'
+                fill_info['gradient_colors'] = []
+                try:
+                    for stop in fill.gradient_stops:
+                        if stop.color and stop.color.rgb:
+                            fill_info['gradient_colors'].append(
+                                self._rgb_to_hex(stop.color.rgb)
+                            )
+                except:
+                    pass
+            
+            elif 'PICTURE' in fill_type or 'BACKGROUND' in fill_type:
+                fill_info['type'] = 'image'
+                fill_info['has_image'] = True
             
             return fill_info
         except Exception as e:
+            print(f"Error extracting fill info: {e}")
             return None
     
     def _analyze_slide_complete(self, slide, slide_idx: int) -> Dict[str, Any]:
@@ -300,33 +313,37 @@ class TemplateAnalyzer:
         }
         
         for shape in slide.shapes:
-            shape_info = self._extract_shape_complete(shape)
-            analysis['layout']['shapes'].append(shape_info)
-            
-            # Collect colors
-            if shape_info.get('fill_color'):
-                analysis['colors'].append(shape_info['fill_color'])
-            if shape_info.get('line_color'):
-                analysis['colors'].append(shape_info['line_color'])
-            if shape_info.get('text_color'):
-                analysis['colors'].append(shape_info['text_color'])
-            
-            # Collect fonts
-            if shape_info.get('font'):
-                analysis['fonts'].append(shape_info['font'])
-            
-            # Update layout flags
-            shape_type = shape_info.get('type', '')
-            if shape_type == 'title':
-                analysis['layout']['has_title'] = True
-            elif shape_type == 'text':
-                analysis['layout']['has_content'] = True
-            elif shape_type == 'chart':
-                analysis['layout']['has_chart'] = True
-            elif shape_type == 'table':
-                analysis['layout']['has_table'] = True
-            elif shape_type == 'picture':
-                analysis['layout']['has_image'] = True
+            try:
+                shape_info = self._extract_shape_complete(shape)
+                analysis['layout']['shapes'].append(shape_info)
+                
+                # Collect colors
+                if shape_info.get('fill_color'):
+                    analysis['colors'].append(shape_info['fill_color'])
+                if shape_info.get('line_color'):
+                    analysis['colors'].append(shape_info['line_color'])
+                if shape_info.get('text_color'):
+                    analysis['colors'].append(shape_info['text_color'])
+                
+                # Collect fonts
+                if shape_info.get('font'):
+                    analysis['fonts'].append(shape_info['font'])
+                
+                # Update layout flags
+                shape_type = shape_info.get('type', '')
+                if shape_type == 'title':
+                    analysis['layout']['has_title'] = True
+                elif shape_type == 'text':
+                    analysis['layout']['has_content'] = True
+                elif shape_type == 'chart':
+                    analysis['layout']['has_chart'] = True
+                elif shape_type == 'table':
+                    analysis['layout']['has_table'] = True
+                elif shape_type == 'picture':
+                    analysis['layout']['has_image'] = True
+            except Exception as e:
+                print(f"Error analyzing shape: {e}")
+                continue
         
         return analysis
     
@@ -341,98 +358,125 @@ class TemplateAnalyzer:
             'rotation': shape.rotation if hasattr(shape, 'rotation') else 0
         }
         
-        # Determine shape type
-        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-            shape_info['type'] = 'picture'
-        elif shape.shape_type == MSO_SHAPE_TYPE.CHART:
-            shape_info['type'] = 'chart'
-            shape_info['chart_type'] = self._get_chart_type(shape)
-        elif shape.shape_type == MSO_SHAPE_TYPE.TABLE:
-            shape_info['type'] = 'table'
-            shape_info['table_style'] = self._get_table_style(shape)
-        elif hasattr(shape, 'text_frame'):
-            shape_info['type'] = 'text'
-            text_info = self._analyze_text_frame_complete(shape.text_frame)
-            shape_info.update(text_info)
-            
-            # Check if it's a title placeholder
-            if hasattr(shape, 'placeholder_format') and shape.placeholder_format:
-                ph_type = str(shape.placeholder_format.type)
-                if 'TITLE' in ph_type or 'CENTER_TITLE' in ph_type:
-                    shape_info['type'] = 'title'
-                elif 'SUBTITLE' in ph_type:
-                    shape_info['type'] = 'subtitle'
-                elif 'BODY' in ph_type:
-                    shape_info['type'] = 'body'
+        try:
+            # Determine shape type
+            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                shape_info['type'] = 'picture'
+            elif shape.shape_type == MSO_SHAPE_TYPE.CHART:
+                shape_info['type'] = 'chart'
+                shape_info['chart_type'] = self._get_chart_type(shape)
+            elif shape.shape_type == MSO_SHAPE_TYPE.TABLE:
+                shape_info['type'] = 'table'
+                shape_info['table_style'] = self._get_table_style(shape)
+            elif hasattr(shape, 'text_frame') and shape.has_text_frame:
+                shape_info['type'] = 'text'
+                text_info = self._analyze_text_frame_complete(shape.text_frame)
+                shape_info.update(text_info)
+                
+                # Check if it's a placeholder - use is_placeholder first
+                try:
+                    if hasattr(shape, 'is_placeholder') and shape.is_placeholder:
+                        ph_format = shape.placeholder_format
+                        if ph_format:
+                            ph_type = str(ph_format.type)
+                            if 'TITLE' in ph_type or 'CENTER_TITLE' in ph_type:
+                                shape_info['type'] = 'title'
+                            elif 'SUBTITLE' in ph_type:
+                                shape_info['type'] = 'subtitle'
+                            elif 'BODY' in ph_type:
+                                shape_info['type'] = 'body'
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"Error determining shape type: {e}")
         
         # Extract fill
-        if hasattr(shape, 'fill') and shape.fill:
-            fill_info = self._extract_fill_info(shape.fill)
-            if fill_info:
-                shape_info['fill'] = fill_info
-                shape_info['fill_color'] = fill_info.get('color')
+        try:
+            if hasattr(shape, 'fill') and shape.fill:
+                fill_info = self._extract_fill_info(shape.fill)
+                if fill_info:
+                    shape_info['fill'] = fill_info
+                    shape_info['fill_color'] = fill_info.get('color')
+        except Exception:
+            pass
         
         # Extract line/border
-        if hasattr(shape, 'line') and shape.line:
-            try:
+        try:
+            if hasattr(shape, 'line') and shape.line:
                 if shape.line.color and shape.line.color.rgb:
                     shape_info['line_color'] = self._rgb_to_hex(shape.line.color.rgb)
-                shape_info['line_width'] = shape.line.width.pt if shape.line.width else 0
-            except:
-                pass
+                if shape.line.width:
+                    shape_info['line_width'] = shape.line.width.pt
+        except Exception:
+            pass
         
         return shape_info
     
     def _analyze_text_frame_complete(self, text_frame) -> Dict[str, Any]:
         """Analyze text frame completely"""
         result = {
-            'paragraphs': [],
-            'margin_left': text_frame.margin_left.inches if text_frame.margin_left else 0,
-            'margin_right': text_frame.margin_right.inches if text_frame.margin_right else 0,
-            'margin_top': text_frame.margin_top.inches if text_frame.margin_top else 0,
-            'margin_bottom': text_frame.margin_bottom.inches if text_frame.margin_bottom else 0
+            'paragraphs': []
         }
         
-        for para in text_frame.paragraphs:
-            para_info = {
-                'alignment': str(para.alignment) if para.alignment else 'LEFT',
-                'level': para.level,
-                'space_before': para.space_before.pt if para.space_before else 0,
-                'space_after': para.space_after.pt if para.space_after else 0,
-                'runs': []
-            }
-            
-            for run in para.runs:
-                run_info = {
-                    'text': run.text,
-                    'font': {
-                        'name': run.font.name,
-                        'size': run.font.size.pt if run.font.size else 18,
-                        'bold': run.font.bold if run.font.bold is not None else False,
-                        'italic': run.font.italic if run.font.italic is not None else False,
-                        'underline': run.font.underline if run.font.underline is not None else False,
-                        'color': self._get_font_color(run.font)
-                    }
+        try:
+            result['margin_left'] = text_frame.margin_left.inches if text_frame.margin_left else 0
+            result['margin_right'] = text_frame.margin_right.inches if text_frame.margin_right else 0
+            result['margin_top'] = text_frame.margin_top.inches if text_frame.margin_top else 0
+            result['margin_bottom'] = text_frame.margin_bottom.inches if text_frame.margin_bottom else 0
+        except:
+            pass
+        
+        try:
+            for para in text_frame.paragraphs:
+                para_info = {
+                    'alignment': str(para.alignment) if para.alignment else 'LEFT',
+                    'level': para.level if hasattr(para, 'level') else 0,
+                    'runs': []
                 }
-                para_info['runs'].append(run_info)
                 
-                # Store first font found for this text frame
-                if 'font' not in result:
-                    result['font'] = run_info['font']
-                    result['text_color'] = run_info['font'].get('color')
-            
-            result['paragraphs'].append(para_info)
+                try:
+                    para_info['space_before'] = para.space_before.pt if para.space_before else 0
+                    para_info['space_after'] = para.space_after.pt if para.space_after else 0
+                except:
+                    para_info['space_before'] = 0
+                    para_info['space_after'] = 0
+                
+                for run in para.runs:
+                    try:
+                        run_info = {
+                            'text': run.text,
+                            'font': {
+                                'name': run.font.name if run.font.name else 'Arial',
+                                'size': run.font.size.pt if run.font.size else 18,
+                                'bold': run.font.bold if run.font.bold is not None else False,
+                                'italic': run.font.italic if run.font.italic is not None else False,
+                                'underline': run.font.underline if run.font.underline is not None else False,
+                                'color': self._get_font_color(run.font)
+                            }
+                        }
+                        para_info['runs'].append(run_info)
+                        
+                        # Store first font found
+                        if 'font' not in result:
+                            result['font'] = run_info['font']
+                            result['text_color'] = run_info['font'].get('color')
+                    except Exception:
+                        continue
+                
+                result['paragraphs'].append(para_info)
+        except Exception as e:
+            print(f"Error analyzing text frame: {e}")
         
         return result
     
     def _get_font_color(self, font) -> str:
         """Get font color as hex string"""
         try:
-            if font.color and font.color.rgb:
-                return self._rgb_to_hex(font.color.rgb)
-            elif font.color and font.color.theme_color:
-                # Theme color - return a reasonable default based on theme
-                return '#F8FAFC'
+            if font.color and font.color.type is not None:
+                if font.color.rgb:
+                    return self._rgb_to_hex(font.color.rgb)
+                elif font.color.theme_color:
+                    return '#F8FAFC'
         except:
             pass
         return '#F8FAFC'
@@ -457,11 +501,14 @@ class TemplateAnalyzer:
             
             # Try to get header row colors
             if len(table.rows) > 0:
-                first_cell = table.cell(0, 0)
-                if hasattr(first_cell, 'fill') and first_cell.fill.type:
-                    fill_info = self._extract_fill_info(first_cell.fill)
-                    if fill_info:
-                        style_info['header_fill'] = fill_info
+                try:
+                    first_cell = table.cell(0, 0)
+                    if hasattr(first_cell, 'fill') and first_cell.fill.type:
+                        fill_info = self._extract_fill_info(first_cell.fill)
+                        if fill_info:
+                            style_info['header_fill'] = fill_info
+                except:
+                    pass
             
             return style_info
         except:
@@ -472,20 +519,17 @@ class TemplateAnalyzer:
         try:
             theme_colors = []
             
-            # Try to access theme
             if prs.slide_masters:
                 master = prs.slide_masters[0]
-                # Theme colors are typically in the master's theme
-                # We extract from shapes as a fallback
                 for shape in master.shapes:
-                    if hasattr(shape, 'fill') and shape.fill.type:
-                        try:
+                    try:
+                        if hasattr(shape, 'fill') and shape.fill and shape.fill.type:
                             if shape.fill.fore_color and shape.fill.fore_color.rgb:
                                 color = self._rgb_to_hex(shape.fill.fore_color.rgb)
                                 if color not in theme_colors:
                                     theme_colors.append(color)
-                        except:
-                            pass
+                    except:
+                        pass
             
             if theme_colors:
                 self.template_data['color_scheme'] = theme_colors[:10]
@@ -541,36 +585,38 @@ class TemplateAnalyzer:
         
         # Group by size
         sized_fonts = [(f, f.get('size', 0)) for f in fonts if f.get('size')]
+        if not sized_fonts:
+            return
+            
         sized_fonts.sort(key=lambda x: x[1], reverse=True)
         
-        if sized_fonts:
-            # Largest font = title
-            title_font = sized_fonts[0][0]
-            self.template_data['fonts']['title'] = {
-                'name': title_font.get('name', 'Arial'),
-                'size': title_font.get('size', 44),
-                'bold': title_font.get('bold', True),
-                'color': title_font.get('color', '#F8FAFC')
+        # Largest font = title
+        title_font = sized_fonts[0][0]
+        self.template_data['fonts']['title'] = {
+            'name': title_font.get('name', 'Arial'),
+            'size': title_font.get('size', 44),
+            'bold': title_font.get('bold', True),
+            'color': title_font.get('color', '#F8FAFC')
+        }
+        
+        # Medium fonts = subtitle/body
+        if len(sized_fonts) > 1:
+            subtitle_font = sized_fonts[len(sized_fonts)//3][0]
+            self.template_data['fonts']['subtitle'] = {
+                'name': subtitle_font.get('name', 'Arial'),
+                'size': subtitle_font.get('size', 28),
+                'bold': subtitle_font.get('bold', False),
+                'color': subtitle_font.get('color', '#94A3B8')
             }
-            
-            # Medium fonts = subtitle/body
-            if len(sized_fonts) > 1:
-                subtitle_font = sized_fonts[len(sized_fonts)//3][0]
-                self.template_data['fonts']['subtitle'] = {
-                    'name': subtitle_font.get('name', 'Arial'),
-                    'size': subtitle_font.get('size', 28),
-                    'bold': subtitle_font.get('bold', False),
-                    'color': subtitle_font.get('color', '#94A3B8')
-                }
-            
-            if len(sized_fonts) > 2:
-                body_font = sized_fonts[-1][0]
-                self.template_data['fonts']['body'] = {
-                    'name': body_font.get('name', 'Arial'),
-                    'size': body_font.get('size', 18),
-                    'bold': body_font.get('bold', False),
-                    'color': body_font.get('color', '#F8FAFC')
-                }
+        
+        if len(sized_fonts) > 2:
+            body_font = sized_fonts[-1][0]
+            self.template_data['fonts']['body'] = {
+                'name': body_font.get('name', 'Arial'),
+                'size': body_font.get('size', 18),
+                'bold': body_font.get('bold', False),
+                'color': body_font.get('color', '#F8FAFC')
+            }
     
     def analyze_image(self, image_file: io.BytesIO) -> Dict[str, Any]:
         """Analyze an image to extract styling"""
@@ -585,25 +631,31 @@ class TemplateAnalyzer:
     
     def _extract_colors_from_image(self, image: Image.Image) -> List[str]:
         """Extract dominant colors from image"""
-        image = image.resize((150, 150))
-        
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
-        
-        pixels = list(image.getdata())
-        color_counts = Counter()
-        
-        for pixel in pixels:
-            rounded = (pixel[0] // 32 * 32, pixel[1] // 32 * 32, pixel[2] // 32 * 32)
-            color_counts[rounded] += 1
-        
-        top_colors = color_counts.most_common(10)
-        return [self._rgb_tuple_to_hex(color) for color, _ in top_colors]
+        try:
+            image = image.resize((150, 150))
+            
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            pixels = list(image.getdata())
+            color_counts = Counter()
+            
+            for pixel in pixels:
+                rounded = (pixel[0] // 32 * 32, pixel[1] // 32 * 32, pixel[2] // 32 * 32)
+                color_counts[rounded] += 1
+            
+            top_colors = color_counts.most_common(10)
+            return [self._rgb_tuple_to_hex(color) for color, _ in top_colors]
+        except Exception as e:
+            print(f"Error extracting colors from image: {e}")
+            return []
     
-    def _rgb_to_hex(self, rgb: RGBColor) -> str:
+    def _rgb_to_hex(self, rgb) -> str:
         """Convert RGBColor to hex"""
         try:
-            return f'#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}'
+            if hasattr(rgb, '__iter__'):
+                return f'#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}'
+            return '#000000'
         except:
             return '#000000'
     
@@ -613,12 +665,15 @@ class TemplateAnalyzer:
     
     def _get_lightness(self, hex_color: str) -> float:
         """Get lightness of hex color"""
-        hex_color = hex_color.lstrip('#')
-        r = int(hex_color[0:2], 16) / 255
-        g = int(hex_color[2:4], 16) / 255
-        b = int(hex_color[4:6], 16) / 255
-        _, lightness, _ = colorsys.rgb_to_hls(r, g, b)
-        return lightness
+        try:
+            hex_color = hex_color.lstrip('#')
+            r = int(hex_color[0:2], 16) / 255
+            g = int(hex_color[2:4], 16) / 255
+            b = int(hex_color[4:6], 16) / 255
+            _, lightness, _ = colorsys.rgb_to_hls(r, g, b)
+            return lightness
+        except:
+            return 0.5
     
     def get_template_summary(self) -> str:
         """Generate summary of analyzed template"""
