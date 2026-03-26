@@ -1,183 +1,177 @@
 import streamlit as st
 from pptx import Presentation
+from pptx.chart.data import ChartData
+from pptx.enum.chart import XL_CHART_TYPE
 from pptx.enum.shapes import PP_PLACEHOLDER
+from pptx.util import Inches
 import io
 import json
 from groq import Groq
 
 # --- Page Configuration ---
-st.set_page_config(
-    page_title="AI Presentation Architect",
-    page_icon="🚀",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="True AI Presentation Architect", page_icon="🧠", layout="wide")
 
-# --- Dynamic Model Fetching ---
-@st.cache_data(ttl=3600)
-def get_available_groq_models(_client):
+# --- 1. AI-Driven Content Strategy ---
+def generate_presentation_strategy(api_key, model, topic, num_slides):
+    if not api_key: st.error("Groq API key not configured."); return None
+    client = Groq(api_key=api_key)
+    system_prompt = f"""
+    You are a world-class business strategist. Create a diverse presentation strategy about '{topic}'.
+    Your response MUST be a valid JSON object. The root object should have a "slides" key, containing an array of slide objects.
+    Generate exactly {num_slides} unique slides.
+    For each slide, provide a "type" which can be 'content', 'bar_chart', or 'table'.
+    - If type is 'content', include "title" (string) and "bullets" (array of strings).
+    - If type is 'bar_chart', include "title" (string) and "data" (an object with "categories" array and "series" array of objects with "name" and "values").
+    - If type is 'table', include "title" (string), "headers" (array of strings), and "rows" (array of arrays of strings).
+    Ensure the data is realistic and properly structured for the slide type.
+    """
     try:
-        model_list = _client.models.list().data
-        active_models = [m for m in model_list if m.active and "embedding" not in m.id]
-        return sorted([model.id for model in active_models])
+        chat_completion = client.chat.completions.create(
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Generate a {num_slides}-slide presentation strategy on: {topic}"}],
+            model=model, temperature=0.8, response_format={"type": "json_object"},
+        )
+        response_data = json.loads(chat_completion.choices[0].message.content)
+        return response_data.get("slides")
     except Exception as e:
-        st.warning(f"Could not fetch live model list. Using fallback. Error: {e}")
-        return ["llama3-8b-8192", "mixtral-8x7b-32768", "gemma2-9b-it"]
+        st.error(f"Groq API Error: Failed to generate presentation strategy. Details: {e}"); return None
 
-# --- Core Presentation Logic (with Definitive Layout Cycling) ---
-def create_presentation_from_template(template_file, main_title, slides_content):
-    """
-    Creates a new presentation by intelligently analyzing the template, separating the
-    title slide from a cycled list of true content layouts.
-    """
+# --- 2. Intelligent Template Analysis ---
+@st.cache_data
+def analyze_template(_template_file):
+    prs = Presentation(_template_file)
+    layout_map = {"content": [], "chart": [], "table": []}
+    title_layout = None
+    for i, layout in enumerate(prs.slide_layouts):
+        has_title = any(p.placeholder_format.type in [PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE] for p in layout.placeholders)
+        if has_title and not title_layout: title_layout = layout
+        
+        has_body = any(p.placeholder_format.type == PP_PLACEHOLDER.BODY for p in layout.placeholders)
+        has_chart = any(p.placeholder_format.type == PP_PLACEHOLDER.CHART for p in layout.placeholders)
+        has_table = any(p.placeholder_format.type == PP_PLACEHOLDER.TABLE for p in layout.placeholders)
+        
+        if has_chart and has_title: layout_map["chart"].append(layout)
+        elif has_table and has_title: layout_map["table"].append(layout)
+        elif has_body and has_title: layout_map["content"].append(layout)
+    
+    # Fallback if specific layouts are not found
+    if not layout_map["chart"] and layout_map["content"]: layout_map["chart"] = layout_map["content"]
+    if not layout_map["table"] and layout_map["content"]: layout_map["table"] = layout_map["content"]
+    
+    return title_layout, layout_map
+
+# --- 3 & 4. Semantic Matching and Complex Population ---
+def create_presentation_from_strategy(template_file, main_title, strategy):
     try:
         prs = Presentation(template_file)
+        title_layout, layout_map = analyze_template(io.BytesIO(template_file.getvalue()))
     except Exception as e:
-        st.error(f"❌ Error reading the template file: {e}"); return None
+        st.error(f"❌ Error analyzing the template file: {e}"); return None
 
-    # --- DEFINITIVE FIX: Intelligent Layout Discovery and Separation ---
-    title_layout = None
-    content_layouts = []
-
-    # First, find the best candidate for the main title slide (usually the first one with a title).
-    for layout in prs.slide_layouts:
-        if any(p.placeholder_format.type in [PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE] for p in layout.placeholders):
-            title_layout = layout
-            break
+    # Clean existing slides
+    for i in range(len(prs.slides) - 1, -1, -1):
+        rId = prs.slides._sldIdLst[i].rId; prs.part.drop_rel(rId); del prs.slides._sldIdLst[i]
     
-    # If no title slide found, fallback to the first layout, but this is unlikely.
-    if not title_layout and len(prs.slide_layouts) > 0:
-        title_layout = prs.slide_layouts[0]
-        
-    # Now, build the list of content layouts, excluding the main title layout.
-    for layout in prs.slide_layouts:
-        has_title = any(p.placeholder_format.type in [PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE] for p in layout.placeholders)
-        has_body = any(p.placeholder_format.type == PP_PLACEHOLDER.BODY for p in layout.placeholders)
-        
-        # A valid content layout has both title and body, AND is not the main title slide.
-        if has_title and has_body and layout != title_layout:
-            content_layouts.append(layout)
-    
-    if not content_layouts:
-        st.error("❌ Template Error: Could not find any suitable 'Title and Content' layouts in your presentation. Please use a template with layouts that have both a title and a main body text area.")
-        return None
-    # --- END DEFINITIVE FIX ---
-
-    # Clean the presentation by removing all existing slides
-    try:
-        for i in range(len(prs.slides) - 1, -1, -1):
-            rId = prs.slides._sldIdLst[i].rId
-            prs.part.drop_rel(rId)
-            del prs.slides._sldIdLst[i]
-    except Exception as e:
-        st.error(f"❌ Could not clean the template file. Error: {e}"); return None
-
-    # --- Build the new presentation ---
-    # Add Main Title Slide
-    if not title_layout: st.warning("⚠️ Could not find a suitable title slide layout."); return None
-    slide = prs.slides.add_slide(title_layout)
+    # Add Title Slide
+    slide = prs.slides.add_slide(title_layout if title_layout else prs.slide_layouts[0])
     if slide.shapes.title: slide.shapes.title.text = main_title
-    try: slide.placeholders[1].text = "Generated by AI Presentation Architect"
+    try: slide.placeholders[1].text = "Generated by True AI Architect"
     except (KeyError, IndexError): pass
 
-    # Add Content Slides, cycling through the filtered list of valid layouts
-    for i, content in enumerate(slides_content):
-        layout = content_layouts[i % len(content_layouts)]
+    # --- Main Generation Loop ---
+    for i, slide_data in enumerate(strategy):
+        slide_type = slide_data.get("type", "content")
+        layouts = layout_map.get(slide_type, layout_map["content"])
+        if not layouts: st.warning(f"No suitable layout found for slide type '{slide_type}'. Skipping."); continue
+        
+        layout = layouts[i % len(layouts)]
         slide = prs.slides.add_slide(layout)
-        
-        if slide.shapes.title: slide.shapes.title.text = content.get("title", "No Title")
-        body_shape = next((shape for shape in slide.placeholders if shape.placeholder_format.type == PP_PLACEHOLDER.BODY), None)
-        
-        if body_shape:
-            tf = body_shape.text_frame; tf.clear(); tf.word_wrap = True
-            content_bullets = content.get("bullets", [])
-            if content_bullets:
-                try: p = tf.paragraphs[0]; p.text = content_bullets[0]
-                except IndexError: p = tf.add_paragraph(); p.text = content_bullets[0]
-                p.level = 0
-                for bullet_text in content_bullets[1:]:
-                    p = tf.add_paragraph(); p.text = bullet_text; p.level = 0
-        else: st.warning(f"⚠️ Could not find 'Body' placeholder on Slide {i+2} using layout '{layout.name}'.")
+        if slide.shapes.title: slide.shapes.title.text = slide_data.get("title", "")
+
+        # --- Populate based on slide type ---
+        if slide_type == "content":
+            body_shape = next((s for s in slide.placeholders if s.placeholder_format.type == PP_PLACEHOLDER.BODY), None)
+            if body_shape:
+                tf = body_shape.text_frame; tf.clear(); tf.word_wrap = True
+                bullets = slide_data.get("bullets", [])
+                for bullet in bullets: p = tf.add_paragraph(); p.text = bullet; p.level = 0
+
+        elif slide_type == "bar_chart":
+            chart_placeholder = next((s for s in slide.placeholders if s.placeholder_format.type == PP_PLACEHOLDER.CHART), None)
+            if chart_placeholder:
+                chart_data = ChartData()
+                chart_info = slide_data.get("data", {})
+                chart_data.categories = chart_info.get("categories", [])
+                for series in chart_info.get("series", []):
+                    chart_data.add_series(series.get("name", ""), series.get("values", []))
+                chart_placeholder.insert_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, chart_data)
+
+        elif slide_type == "table":
+            table_placeholder = next((s for s in slide.placeholders if s.placeholder_format.type == PP_PLACEHOLDER.TABLE), None)
+            if table_placeholder:
+                headers = slide_data.get("headers", [])
+                rows_data = slide_data.get("rows", [])
+                shape = table_placeholder.insert_table(rows=len(rows_data) + 1, cols=len(headers))
+                table = shape.table
+                for col_idx, header in enumerate(headers): table.cell(0, col_idx).text = header
+                for row_idx, row_data in enumerate(rows_data):
+                    for col_idx, cell_data in enumerate(row_data):
+                        table.cell(row_idx + 1, col_idx).text = str(cell_data)
 
     bio = io.BytesIO(); prs.save(bio); bio.seek(0); return bio
 
-# --- Groq LLM Content Generation (JSON mode) ---
-def generate_content_with_groq(api_key, model, topic, num_slides):
-    if not api_key: st.error("Groq API key not configured."); return None
-    client = Groq(api_key=api_key)
-    system_prompt = f"""You are an expert presentation creator. Your response MUST be a valid JSON array of objects. Each object represents a single slide and must have two keys: "title" (a string) and "bullets" (an array of strings). Generate exactly {num_slides} unique slides about the topic: '{topic}'."""
-    try:
-        chat_completion = client.chat.completions.create(
-            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Generate {num_slides} slides about {topic}."}],
-            model=model, temperature=0.7, response_format={"type": "json_object"},
-        )
-        response_data = json.loads(chat_completion.choices[0].message.content)
-        for key, value in response_data.items():
-            if isinstance(value, list): return value
-        st.error("AI did not return the expected slide array format."); return None
-    except Exception as e: st.error(f"Groq API Error: {e}"); return None
+# --- UI ---
+st.title("🧠 True AI Presentation Architect")
+st.markdown("Generates a complete presentation strategy with text, charts, and tables, then matches it to your enterprise template's specialized layouts.")
 
-# --- UI (No changes needed) ---
-st.title("🚀 AI Presentation Architect")
-st.markdown("Create multi-slide presentations with layout variety and editable content.")
-
-if 'generated_slides' not in st.session_state: st.session_state.generated_slides = []
-if 'ppt_download_buffer' not in st.session_state: st.session_state.ppt_download_buffer = None
+if 'strategy' not in st.session_state: st.session_state.strategy = []
+if 'ppt_buffer' not in st.session_state: st.session_state.ppt_buffer = None
 
 with st.sidebar:
     st.header("⚙️ Configuration")
-    with st.expander("1️⃣ Upload Template", expanded=True):
-        uploaded_template = st.file_uploader("Upload a .pptx file", type="pptx", label_visibility="collapsed")
-    with st.expander("2️⃣ Define Content", expanded=True):
-        presentation_title = st.text_input("Main Presentation Title", "Quarterly Business Review")
-        st.subheader("AI Content Engine")
-        try:
-            groq_api_key = st.secrets["GROQ_API_KEY"]; groq_client = Groq(api_key=groq_api_key)
-            st.success("Groq API key loaded.", icon="✅")
-        except:
-            st.error("Groq API key not found in secrets."); groq_api_key = None; groq_client = None
-        if groq_client:
-            available_models = get_available_groq_models(groq_client)
-            selected_model_id = st.selectbox("Select AI Model (Live)", options=available_models)
-            topic = st.text_input("Presentation Topic", "The Future of Renewable Energy")
-            num_slides = st.number_input("Number of Content Slides", min_value=1, max_value=50, value=3)
-            if st.button("✨ Generate Content"):
-                with st.spinner(f"🤖 Calling {selected_model_id}..."):
-                    generated_data = generate_content_with_groq(groq_api_key, selected_model_id, topic, num_slides)
-                    if generated_data:
-                        st.session_state.generated_slides = generated_data
-                        st.session_state.ppt_download_buffer = None
-                        st.toast(f"{len(generated_data)} slides generated!", icon="🎉"); st.rerun()
+    uploaded_template = st.file_uploader("1. Upload Your Enterprise Template (.pptx)", type="pptx")
+    presentation_title = st.text_input("2. Main Presentation Title", "Q3 Sales Performance")
+    topic = st.text_input("3. Presentation Topic", "A quarterly business review of our company's sales")
+    num_slides = st.number_input("4. Number of Content Slides to Generate", 1, 50, 5)
 
-if not uploaded_template:
-    st.info("👈 Please upload your company's .pptx template to begin.")
-else:
-    if st.session_state.ppt_download_buffer:
-        st.success("✅ Your presentation is ready to download!")
-        st.download_button(
-            label="📥 Download Presentation (.pptx)", data=st.session_state.ppt_download_buffer,
-            file_name=f"{st.session_state.get('presentation_title', 'presentation').replace(' ', '_').lower()}.pptx",
-            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation", use_container_width=True
-        )
-        st.markdown("---")
-    if st.session_state.generated_slides:
-        st.header("📝 Edit & Generate Presentation")
-        edited_slides = []
-        with st.container(border=True):
-            st.markdown(f"##### Main Title Slide\n- **Title:** `{presentation_title}`")
-            st.markdown("---")
-            for i, slide_content in enumerate(st.session_state.generated_slides, 1):
-                with st.expander(f"Edit Content Slide {i}: {slide_content.get('title', 'N/A')}", expanded=True):
-                    edited_title = st.text_input("Slide Title", value=slide_content.get("title"), key=f"title_{i}")
-                    edited_bullets_text = st.text_area("Bullet Points", value="\n".join(slide_content.get("bullets", [])), key=f"bullets_{i}", height=150)
-                edited_slides.append({"title": edited_title, "bullets": [line.strip() for line in edited_bullets_text.split("\n") if line.strip()]})
-                st.markdown("---")
-        st.divider()
-        if st.button("✅ Confirm & Generate PPT", type="primary", use_container_width=True):
-            with st.spinner("Assembling your presentation..."):
-                generated_ppt_io = create_presentation_from_template(uploaded_template, presentation_title, edited_slides)
-                if generated_ppt_io:
-                    st.session_state.presentation_title = presentation_title
-                    st.session_state.ppt_download_buffer = generated_ppt_io
-                    st.session_state.generated_slides = []
-                    st.rerun()
+    st.subheader("AI Engine")
+    try:
+        groq_api_key = st.secrets["GROQ_API_KEY"]; groq_client = Groq(api_key=groq_api_key)
+        st.success("Groq API key loaded.", icon="✅")
+    except:
+        st.error("Groq API key not found."); groq_api_key = None; groq_client = None
+
+    if st.button("✨ Generate Presentation Strategy", type="primary"):
+        if not uploaded_template or not topic or not groq_client:
+            st.warning("Please upload a template, enter a topic, and ensure your API key is set.")
+        else:
+            with st.spinner("🤖 AI is developing a multi-format presentation strategy..."):
+                strategy = generate_presentation_strategy(groq_api_key, "llama3-8b-8192", topic, num_slides)
+                if strategy:
+                    st.session_state.strategy = strategy
+                    st.toast("Strategy generated! Review and edit in the main panel.")
+
+if st.session_state.ppt_buffer:
+    st.success("✅ Your presentation is ready!")
+    st.download_button("📥 Download Presentation", st.session_state.ppt_buffer, f"{presentation_title.replace(' ', '_')}.pptx", use_container_width=True)
+
+if st.session_state.strategy:
+    st.header("📝 Edit Strategy & Generate PPT")
+    edited_strategy = []
+    for i, slide in enumerate(st.session_state.strategy):
+        with st.expander(f"Slide {i+1}: **{slide.get('type', 'content').replace('_', ' ').title()}** - {slide.get('title', '...')}", expanded=True):
+            slide['title'] = st.text_input("Slide Title", value=slide.get("title", ""), key=f"title_{i}")
+            if slide['type'] == 'content':
+                slide['bullets'] = st.text_area("Bullet Points", "\n".join(slide.get("bullets", [])), key=f"bullets_{i}", height=120).split("\n")
+            # In a real app, you'd add editing for chart/table data here
+            # For now, we'll just show it
+            else:
+                st.json(slide.get("data") or slide.get("headers") or slide.get("rows"))
+            edited_strategy.append(slide)
+    
+    if st.button("✅ Build My Presentation", use_container_width=True):
+        with st.spinner("🏗️ Building presentation with complex objects..."):
+            ppt_io = create_presentation_from_strategy(uploaded_template, presentation_title, edited_strategy)
+            if ppt_io:
+                st.session_state.ppt_buffer = ppt_io
+                st.session_state.strategy = [] # Clear editor
+                st.rerun()
