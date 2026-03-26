@@ -47,7 +47,8 @@ def render_preview(content: Dict, template_data: Dict) -> None:
                 st.rerun()
         
         if 0 <= idx < len(previews):
-            st.image(previews[idx], use_container_width=True)
+            # UPDATED: use_container_width=True → width="stretch"
+            st.image(previews[idx], width="stretch")
             
             slide = content['slides'][idx]
             st.markdown(f"**{slide.get('title', 'Untitled')}** — Layout: {slide.get('layout', 'content').title()}")
@@ -60,5 +61,6 @@ def render_preview(content: Dict, template_data: Dict) -> None:
                 slide_idx = row_start + i
                 if slide_idx < len(previews):
                     with col:
-                        st.image(previews[slide_idx].resize((320, 180)), use_container_width=True)
+                        # UPDATED: use_container_width=True → width="stretch"
+                        st.image(previews[slide_idx].resize((320, 180)), width="stretch")
                         st.caption(f"{slide_idx + 1}. {content['slides'][slide_idx].get('title', '')[:20]}...")
