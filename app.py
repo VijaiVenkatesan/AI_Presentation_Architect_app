@@ -1,762 +1,391 @@
+"""
+AI Presentation Architect - Main Application
+Enterprise-level PowerPoint generator with AI content creation
+"""
+
 import streamlit as st
-from pptx import Presentation
-from pptx.util import Inches, Pt
-from pptx.enum.shapes import MSO_SHAPE_TYPE
-from pptx.chart.data import CategoryChartData
-from pptx.enum.chart import XL_CHART_TYPE
-import json
 import io
-from groq import Groq
-from typing import Dict, List, Any, Optional
-import traceback
+from datetime import datetime
 
-# ============================================================================
-# CONFIGURATION & INITIALIZATION
-# ============================================================================
+# Import utilities
+from utils.llm_handler import LLMHandler
+from utils.template_analyzer import TemplateAnalyzer
+from utils.ppt_generator import PresentationGenerator
+from utils.search_handler import SearchHandler
+from utils.preview_handler import PreviewHandler
 
+# Import components
+from components.sidebar import render_sidebar
+from components.editor import render_editor
+from components.preview import render_preview
+from components.chat_interface import render_chat_interface
+
+
+# Page configuration
 st.set_page_config(
     page_title="AI Presentation Architect",
     page_icon="🎯",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Initialize session state variables
-if 'template_analyzed' not in st.session_state:
-    st.session_state.template_analyzed = False
-if 'layout_map' not in st.session_state:
-    st.session_state.layout_map = {}
-if 'ai_strategy' not in st.session_state:
-    st.session_state.ai_strategy = None
-if 'edited_strategy' not in st.session_state:
-    st.session_state.edited_strategy = None
-if 'available_models' not in st.session_state:
-    st.session_state.available_models = []
-if 'template_bytes' not in st.session_state:
-    st.session_state.template_bytes = None  # Store raw bytes, not Presentation object
-
-# ============================================================================
-# GROQ API FUNCTIONS
-# ============================================================================
-
-def get_groq_client() -> Optional[Groq]:
-    """Initialize and return Groq client using Streamlit secrets."""
-    try:
-        api_key = st.secrets.get("GROQ_API_KEY")
-        if not api_key:
-            st.error("⚠️ GROQ_API_KEY not found in Streamlit secrets.")
-            return None
-        return Groq(api_key=api_key)
-    except Exception as e:
-        st.error(f"❌ Error initializing Groq client: {str(e)}")
-        return None
-
-def fetch_available_models(client: Groq) -> List[str]:
-    """Dynamically fetch available models from Groq API."""
-    try:
-        models = client.models.list()
-        model_ids = [model.id for model in models.data if model.active]
-        return sorted(model_ids)
-    except Exception as e:
-        st.error(f"❌ Error fetching models: {str(e)}")
-        return []
-
-def generate_presentation_strategy(
-    client: Groq,
-    model: str,
-    topic: str,
-    num_slides: int
-) -> Optional[List[Dict[str, Any]]]:
-    """Generate a complete presentation strategy using AI."""
-    
-    system_prompt = """You are an expert presentation strategist. Your task is to create a complete, 
-professional presentation strategy in JSON format. You must generate diverse slide types including 
-content slides, charts, and tables.
-
-CRITICAL: You must respond with ONLY a valid JSON array. No explanations, no markdown, no code blocks.
-
-Each slide object must have this exact structure:
-{
-    "type": "content" | "bar_chart" | "table",
-    "title": "Slide Title Here",
-    "data": {
-        // For content type:
-        "bullets": ["Point 1", "Point 2", "Point 3"]
-        
-        // For bar_chart type:
-        "categories": ["Category 1", "Category 2", "Category 3"],
-        "series": [{"name": "Series Name", "values": [10, 20, 30]}]
-        
-        // For table type:
-        "headers": ["Column 1", "Column 2", "Column 3"],
-        "rows": [["Data 1", "Data 2", "Data 3"], ["Data 4", "Data 5", "Data 6"]]
-    }
-}
-
-Rules:
-1. Create a mix of slide types (at least 1-2 charts and 1 table if num_slides > 5)
-2. Keep bullet points concise (max 5 per slide)
-3. Chart data must be realistic and relevant
-4. Table data must be professional and formatted
-5. Ensure titles are clear and descriptive
-6. Output ONLY the JSON array, nothing else"""
-
-    user_prompt = f"""Create a {num_slides}-slide presentation strategy about: {topic}
-
-Generate a JSON array with exactly {num_slides} slide objects. Include a good mix of content slides, 
-bar charts, and tables. Make it professional and comprehensive."""
-
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.7,
-            max_tokens=4000
-        )
-        
-        content = response.choices[0].message.content.strip()
-        
-        # Remove markdown code blocks if present
-        if content.startswith("```"):
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
-            content = content.strip()
-        
-        strategy = json.loads(content)
-        
-        # Validate structure
-        if not isinstance(strategy, list):
-            st.error("Invalid response: Expected a JSON array")
-            return None
-            
-        for slide in strategy:
-            if not all(k in slide for k in ['type', 'title', 'data']):
-                st.error("Invalid slide structure in AI response")
-                return None
-        
-        return strategy
-        
-    except json.JSONDecodeError as e:
-        st.error(f"❌ Failed to parse AI response as JSON: {str(e)}")
-        st.code(content, language="text")
-        return None
-    except Exception as e:
-        st.error(f"❌ Error generating strategy: {str(e)}")
-        return None
-
-# ============================================================================
-# TEMPLATE ANALYSIS FUNCTIONS
-# ============================================================================
-
-def analyze_template(prs: Presentation) -> Dict[str, Any]:
-    """
-    Deep analysis of PowerPoint template to identify and categorize layouts.
-    
-    Returns a dictionary with:
-    - title_layout: The main title slide layout
-    - content_layouts: List of layouts suitable for bullet content
-    - chart_layouts: List of layouts with chart placeholders
-    - table_layouts: List of layouts with table placeholders
-    """
-    
-    layout_map = {
-        'title_layout': None,
-        'content_layouts': [],
-        'chart_layouts': [],
-        'table_layouts': [],
-        'all_layouts': []
+# Custom CSS
+st.markdown("""
+<style>
+    /* Main container */
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        max-width: 1400px;
     }
     
-    for idx, layout in enumerate(prs.slide_layouts):
-        layout_info = {
-            'index': idx,
-            'name': layout.name,
-            'has_title': False,
-            'has_body': False,
-            'has_chart': False,
-            'has_table': False
-        }
-        
-        # Analyze placeholders
-        for shape in layout.placeholders:
-            ph_type = shape.placeholder_format.type
-            
-            if ph_type == 1:  # Title placeholder
-                layout_info['has_title'] = True
-            elif ph_type == 2:  # Body/Content placeholder
-                layout_info['has_body'] = True
-            elif ph_type == 12:  # Chart placeholder
-                layout_info['has_chart'] = True
-            elif ph_type == 13:  # Table placeholder
-                layout_info['has_table'] = True
-        
-        layout_map['all_layouts'].append(layout_info)
-        
-        # Categorize layouts
-        # Title Slide: Has title, typically no body, usually first layout
-        if idx == 0 or (layout_info['has_title'] and not layout_info['has_body'] 
-                        and 'title' in layout.name.lower()):
-            if layout_map['title_layout'] is None:
-                layout_map['title_layout'] = idx
-        
-        # Chart Layout: Has chart placeholder
-        if layout_info['has_chart']:
-            layout_map['chart_layouts'].append(idx)
-        
-        # Table Layout: Has table placeholder
-        if layout_info['has_table']:
-            layout_map['table_layouts'].append(idx)
-        
-        # Content Layout: Has both title and body, but is NOT the title slide
-        if (layout_info['has_title'] and layout_info['has_body'] 
-            and idx != layout_map['title_layout']):
-            layout_map['content_layouts'].append(idx)
+    /* Headers */
+    h1, h2, h3 {
+        color: #F8FAFC !important;
+    }
     
-    # Fallback: if no content layouts found, use any layout with title
-    if not layout_map['content_layouts']:
-        for info in layout_map['all_layouts']:
-            if info['has_title'] and info['index'] != layout_map['title_layout']:
-                layout_map['content_layouts'].append(info['index'])
+    /* Cards */
+    .stCard {
+        background: linear-gradient(180deg, #1E293B 0%, #0F172A 100%);
+        border-radius: 16px;
+        padding: 1.5rem;
+        border: 1px solid #334155;
+    }
     
-    return layout_map
+    /* Buttons */
+    .stButton > button {
+        background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        padding: 0.5rem 1rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+    }
+    
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background: #1E293B;
+        padding: 0.5rem;
+        border-radius: 12px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        background: transparent;
+        color: #94A3B8;
+        border-radius: 8px;
+        padding: 0.5rem 1rem;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+        color: white;
+    }
+    
+    /* Info boxes */
+    .stAlert {
+        background: #1E293B;
+        border: 1px solid #334155;
+        border-radius: 8px;
+    }
+    
+    /* Expanders */
+    .streamlit-expanderHeader {
+        background: #1E293B;
+        border-radius: 8px;
+    }
+    
+    /* Success message */
+    .success-box {
+        background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+        color: white;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 1rem 0;
+    }
+    
+    /* Model badge */
+    .model-badge {
+        display: inline-block;
+        background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+        color: white;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        margin: 0.25rem;
+    }
+    
+    /* Divider */
+    hr {
+        border-color: #334155;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-def display_layout_analysis(layout_map: Dict[str, Any]):
-    """Display the template analysis results in the UI."""
-    st.success("✅ Template analyzed successfully!")
+
+def initialize_session_state():
+    """Initialize session state variables"""
+    defaults = {
+        'content': None,
+        'template_data': None,
+        'generated': False,
+        'chat_history': [],
+        'current_slide': 0
+    }
     
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def main():
+    """Main application"""
+    
+    initialize_session_state()
+    
+    # Initialize handlers
+    llm_handler = LLMHandler()
+    template_analyzer = TemplateAnalyzer()
+    search_handler = SearchHandler()
+    
+    # Render sidebar and get configuration
+    config = render_sidebar(llm_handler)
+    
+    # Main content area
+    st.markdown("""
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <h1 style="
+            background: linear-gradient(135deg, #6366F1 0%, #EC4899 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-size: 2.5rem;
+            font-weight: 800;
+        ">🎯 AI Presentation Architect</h1>
+        <p style="color: #94A3B8; font-size: 1.1rem;">
+            Create stunning enterprise presentations with AI-powered content generation
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Status indicators
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Title Layout", 
-                  f"#{layout_map['title_layout']}" if layout_map['title_layout'] is not None else "None")
+        if llm_handler.is_configured():
+            st.success("✓ AI Ready")
+        else:
+            st.warning("⚠ Add API Key")
     
     with col2:
-        st.metric("Content Layouts", len(layout_map['content_layouts']))
+        if config.get('template_file'):
+            st.success("✓ Template Loaded")
+        else:
+            st.info("○ No Template")
     
     with col3:
-        st.metric("Chart Layouts", len(layout_map['chart_layouts']))
+        st.info(f"📊 {config.get('num_slides', 10)} Slides")
     
     with col4:
-        st.metric("Table Layouts", len(layout_map['table_layouts']))
+        if config.get('selected_model'):
+            model_short = config['selected_model'].split('-')[0].title()
+            st.info(f"🤖 {model_short}")
     
-    with st.expander("📋 Detailed Layout Information"):
-        for info in layout_map['all_layouts']:
-            st.write(f"**Layout {info['index']}: {info['name']}**")
-            features = []
-            if info['has_title']:
-                features.append("Title")
-            if info['has_body']:
-                features.append("Body")
-            if info['has_chart']:
-                features.append("Chart")
-            if info['has_table']:
-                features.append("Table")
-            st.write(f"  Features: {', '.join(features) if features else 'None detected'}")
-
-# ============================================================================
-# PRESENTATION BUILDING FUNCTIONS
-# ============================================================================
-
-def get_placeholder_by_type(slide, ph_type: int):
-    """Get placeholder by type from a slide."""
-    for shape in slide.placeholders:
-        if shape.placeholder_format.type == ph_type:
-            return shape
-    return None
-
-def add_title_slide(prs: Presentation, layout_idx: int, title: str, subtitle: str):
-    """Add a title slide to the presentation."""
-    slide = prs.slides.add_slide(prs.slide_layouts[layout_idx])
+    st.divider()
     
-    # Try to set title
-    title_shape = get_placeholder_by_type(slide, 1)  # Title type
-    if title_shape and hasattr(title_shape, 'text_frame'):
-        title_shape.text = title
-    
-    # Try to set subtitle
-    subtitle_shape = get_placeholder_by_type(slide, 2)  # Body/Subtitle type
-    if subtitle_shape and hasattr(subtitle_shape, 'text_frame'):
-        subtitle_shape.text = subtitle
-
-def add_content_slide(prs: Presentation, layout_idx: int, title: str, bullets: List[str]):
-    """Add a content slide with bullet points."""
-    slide = prs.slides.add_slide(prs.slide_layouts[layout_idx])
-    
-    # Set title
-    title_shape = get_placeholder_by_type(slide, 1)
-    if title_shape and hasattr(title_shape, 'text_frame'):
-        title_shape.text = title
-    
-    # Set body content
-    body_shape = get_placeholder_by_type(slide, 2)
-    if body_shape and hasattr(body_shape, 'text_frame'):
-        text_frame = body_shape.text_frame
-        text_frame.clear()
-        
-        for i, bullet in enumerate(bullets):
-            if i == 0:
-                p = text_frame.paragraphs[0]
+    # Analyze template if uploaded
+    if config.get('template_file') and not st.session_state.template_data:
+        with st.spinner("Analyzing template..."):
+            file_bytes = io.BytesIO(config['template_file'].read())
+            config['template_file'].seek(0)
+            
+            if config['template_file'].name.endswith('.pptx'):
+                st.session_state.template_data = template_analyzer.analyze_pptx(file_bytes)
             else:
-                p = text_frame.add_paragraph()
-            p.text = bullet
-            p.level = 0
-
-def add_chart_slide(prs: Presentation, layout_idx: int, title: str, chart_data: Dict[str, Any]):
-    """Add a slide with a bar chart."""
-    slide = prs.slides.add_slide(prs.slide_layouts[layout_idx])
+                st.session_state.template_data = template_analyzer.analyze_image(file_bytes)
+            
+            st.success("Template analyzed successfully!")
     
-    # Set title
-    title_shape = get_placeholder_by_type(slide, 1)
-    if title_shape and hasattr(title_shape, 'text_frame'):
-        title_shape.text = title
+    # Main tabs
+    tab1, tab2, tab3, tab4 = st.tabs(["💬 Generate", "✏️ Edit", "👁️ Preview", "💾 Export"])
     
-    # Find chart placeholder
-    chart_placeholder = get_placeholder_by_type(slide, 12)  # Chart type
-    
-    if chart_placeholder:
-        # Prepare chart data
-        chart_data_obj = CategoryChartData()
-        chart_data_obj.categories = chart_data.get('categories', ['A', 'B', 'C'])
+    with tab1:
+        st.markdown("### Create Your Presentation")
         
-        for series in chart_data.get('series', []):
-            chart_data_obj.add_series(
-                series.get('name', 'Series'),
-                series.get('values', [1, 2, 3])
-            )
-        
-        # Add chart to placeholder
-        chart = chart_placeholder.insert_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, chart_data_obj)
-    else:
-        # Fallback: add chart to slide if no placeholder
-        x, y, cx, cy = Inches(1), Inches(2), Inches(8), Inches(4.5)
-        
-        chart_data_obj = CategoryChartData()
-        chart_data_obj.categories = chart_data.get('categories', ['A', 'B', 'C'])
-        
-        for series in chart_data.get('series', []):
-            chart_data_obj.add_series(
-                series.get('name', 'Series'),
-                series.get('values', [1, 2, 3])
-            )
-        
-        chart = slide.shapes.add_chart(
-            XL_CHART_TYPE.COLUMN_CLUSTERED, x, y, cx, cy, chart_data_obj
+        # Chat interface for content input
+        user_prompt = render_chat_interface(
+            llm_handler,
+            config.get('selected_model', 'llama-3.3-70b-versatile')
         )
-
-def add_table_slide(prs: Presentation, layout_idx: int, title: str, table_data: Dict[str, Any]):
-    """Add a slide with a table."""
-    slide = prs.slides.add_slide(prs.slide_layouts[layout_idx])
-    
-    # Set title
-    title_shape = get_placeholder_by_type(slide, 1)
-    if title_shape and hasattr(title_shape, 'text_frame'):
-        title_shape.text = title
-    
-    headers = table_data.get('headers', [])
-    rows = table_data.get('rows', [])
-    
-    if not headers:
-        headers = ['Column 1', 'Column 2', 'Column 3']
-    if not rows:
-        rows = [['Data 1', 'Data 2', 'Data 3']]
-    
-    # Find table placeholder
-    table_placeholder = get_placeholder_by_type(slide, 13)  # Table type
-    
-    if table_placeholder:
-        # Insert table into placeholder
-        graphic_frame = table_placeholder.insert_table(
-            rows=len(rows) + 1,
-            cols=len(headers)
-        )
-        table = graphic_frame.table
-    else:
-        # Fallback: create table on slide
-        x, y, cx, cy = Inches(1), Inches(2), Inches(8), Inches(4)
-        shape = slide.shapes.add_table(
-            len(rows) + 1, len(headers), x, y, cx, cy
-        )
-        table = shape.table
-    
-    # Populate headers
-    for col_idx, header in enumerate(headers):
-        cell = table.rows[0].cells[col_idx]
-        cell.text = str(header)
-        # Make header bold if possible
-        try:
-            for paragraph in cell.text_frame.paragraphs:
-                for run in paragraph.runs:
-                    run.font.bold = True
-        except:
-            pass
-    
-    # Populate data rows
-    for row_idx, row in enumerate(rows):
-        for col_idx, cell_value in enumerate(row):
-            if col_idx < len(table.rows[row_idx + 1].cells):
-                table.rows[row_idx + 1].cells[col_idx].text = str(cell_value)
-
-def build_presentation(
-    template_bytes: bytes,
-    layout_map: Dict[str, Any],
-    main_title: str,
-    topic: str,
-    strategy: List[Dict[str, Any]]
-) -> Optional[Presentation]:
-    """Build the final presentation from the strategy."""
-    
-    try:
-        # Create a new presentation from template bytes
-        prs = Presentation(io.BytesIO(template_bytes))
         
-        # Remove any existing slides from template (keep only layouts)
-        while len(prs.slides) > 0:
-            rId = prs.slides._sldIdLst[0].rId
-            prs.part.drop_rel(rId)
-            del prs.slides._sldIdLst[0]
-        
-        # Add title slide
-        if layout_map['title_layout'] is not None:
-            add_title_slide(prs, layout_map['title_layout'], main_title, topic)
-        
-        # Track layout usage for cycling
-        content_idx = 0
-        chart_idx = 0
-        table_idx = 0
-        
-        # Process each slide in the strategy
-        for slide_spec in strategy:
-            slide_type = slide_spec.get('type', 'content')
-            title = slide_spec.get('title', 'Untitled')
-            data = slide_spec.get('data', {})
-            
-            if slide_type == 'content':
-                # Use content layouts with cycling
-                if layout_map['content_layouts']:
-                    layout_idx = layout_map['content_layouts'][content_idx % len(layout_map['content_layouts'])]
-                    content_idx += 1
-                    bullets = data.get('bullets', [])
-                    add_content_slide(prs, layout_idx, title, bullets)
-                else:
-                    st.warning(f"⚠️ No content layouts available. Skipping slide: {title}")
-            
-            elif slide_type == 'bar_chart':
-                # Use chart layouts with cycling, or fallback to content layouts
-                if layout_map['chart_layouts']:
-                    layout_idx = layout_map['chart_layouts'][chart_idx % len(layout_map['chart_layouts'])]
-                    chart_idx += 1
-                    add_chart_slide(prs, layout_idx, title, data)
-                elif layout_map['content_layouts']:
-                    # Fallback to content layout
-                    layout_idx = layout_map['content_layouts'][content_idx % len(layout_map['content_layouts'])]
-                    content_idx += 1
-                    add_chart_slide(prs, layout_idx, title, data)
-                else:
-                    st.warning(f"⚠️ No suitable layouts for chart. Skipping slide: {title}")
-            
-            elif slide_type == 'table':
-                # Use table layouts with cycling, or fallback to content layouts
-                if layout_map['table_layouts']:
-                    layout_idx = layout_map['table_layouts'][table_idx % len(layout_map['table_layouts'])]
-                    table_idx += 1
-                    add_table_slide(prs, layout_idx, title, data)
-                elif layout_map['content_layouts']:
-                    # Fallback to content layout
-                    layout_idx = layout_map['content_layouts'][content_idx % len(layout_map['content_layouts'])]
-                    content_idx += 1
-                    add_table_slide(prs, layout_idx, title, data)
-                else:
-                    st.warning(f"⚠️ No suitable layouts for table. Skipping slide: {title}")
-        
-        return prs
-        
-    except Exception as e:
-        st.error(f"❌ Error building presentation: {str(e)}")
-        st.code(traceback.format_exc())
-        return None
-
-# ============================================================================
-# MAIN APPLICATION UI
-# ============================================================================
-
-def main():
-    st.title("🎯 True AI Presentation Architect")
-    st.markdown("""
-    **Transform your ideas into professional, branded presentations with AI.**
-    
-    Upload your template, define your topic, and let AI create a complete presentation 
-    strategy with diverse content including charts and tables.
-    """)
-    
-    # Initialize Groq client
-    client = get_groq_client()
-    if not client:
-        st.stop()
-    
-    # Fetch available models if not already done
-    if not st.session_state.available_models:
-        with st.spinner("Fetching available AI models..."):
-            st.session_state.available_models = fetch_available_models(client)
-    
-    # ========================================================================
-    # STEP 1: UPLOAD TEMPLATE
-    # ========================================================================
-    
-    st.header("📁 Step 1: Upload Your PowerPoint Template")
-    
-    uploaded_file = st.file_uploader(
-        "Choose your .pptx template file",
-        type=['pptx'],
-        help="Upload your company's branded PowerPoint template"
-    )
-    
-    if uploaded_file is not None:
-        try:
-            # Read and store template bytes
-            template_bytes = uploaded_file.read()
-            
-            # Check if this is a new file upload
-            if st.session_state.template_bytes is None or st.session_state.template_bytes != template_bytes:
-                st.session_state.template_bytes = template_bytes
-                st.session_state.template_analyzed = False
-                st.session_state.ai_strategy = None
-                st.session_state.edited_strategy = None
-            
-            # Load presentation for analysis
-            prs = Presentation(io.BytesIO(template_bytes))
-            
-            # Analyze template
-            if not st.session_state.template_analyzed:
-                with st.spinner("Analyzing template structure..."):
-                    st.session_state.layout_map = analyze_template(prs)
-                    st.session_state.template_analyzed = True
-            
-            display_layout_analysis(st.session_state.layout_map)
-            
-        except Exception as e:
-            st.error(f"❌ Error loading template: {str(e)}")
-            st.code(traceback.format_exc())
-            st.stop()
-    else:
-        st.info("👆 Please upload a PowerPoint template to begin")
-        st.stop()
-    
-    # ========================================================================
-    # STEP 2: DEFINE PRESENTATION DETAILS
-    # ========================================================================
-    
-    st.header("✍️ Step 2: Define Your Presentation")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        main_title = st.text_input(
-            "Main Presentation Title",
-            placeholder="e.g., Q4 2024 Strategy Review",
-            help="This will appear on the title slide"
-        )
-    
-    with col2:
-        topic = st.text_area(
-            "Topic / Description",
-            placeholder="e.g., Comprehensive review of Q4 performance, market analysis, and 2025 strategic initiatives",
-            help="Describe what you want the presentation to cover",
-            height=100
-        )
-    
-    # ========================================================================
-    # STEP 3: AI CONFIGURATION
-    # ========================================================================
-    
-    st.header("🤖 Step 3: Configure AI Generation")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.session_state.available_models:
-            selected_model = st.selectbox(
-                "Select AI Model",
-                options=st.session_state.available_models,
-                help="Choose the AI model to generate your presentation"
-            )
-        else:
-            st.error("No models available. Please check your API configuration.")
-            st.stop()
-    
-    with col2:
-        num_slides = st.slider(
-            "Number of Content Slides",
-            min_value=3,
-            max_value=20,
-            value=8,
-            help="How many slides should the AI generate? (excluding title slide)"
-        )
-    
-    # ========================================================================
-    # STEP 4: GENERATE STRATEGY
-    # ========================================================================
-    
-    st.header("🎨 Step 4: Generate & Edit Presentation Strategy")
-    
-    if st.button("🚀 Generate AI Strategy", type="primary", use_container_width=True):
-        if not main_title or not topic:
-            st.error("⚠️ Please provide both a title and topic description")
-        else:
-            with st.spinner(f"AI is creating a {num_slides}-slide presentation strategy..."):
-                strategy = generate_presentation_strategy(
-                    client,
-                    selected_model,
-                    topic,
-                    num_slides
+        if user_prompt:
+            with st.spinner("🚀 Generating presentation content..."):
+                # Fetch real-time data if enabled
+                real_time_data = None
+                if config.get('include_real_time_data'):
+                    with st.status("Searching for real-time data..."):
+                        real_time_data = search_handler.compile_research_data(user_prompt)
+                        st.write("✓ Data compiled")
+                
+                # Get template context
+                template_context = st.session_state.template_data or template_analyzer._get_default_template()
+                
+                # Apply custom colors if set
+                if config.get('colors'):
+                    template_context['colors'].update(config['colors'])
+                
+                # Generate content
+                content = llm_handler.generate_presentation_content(
+                    prompt=user_prompt,
+                    model=config.get('selected_model', 'llama-3.3-70b-versatile'),
+                    num_slides=config.get('num_slides', 10),
+                    template_context=template_context,
+                    real_time_data=real_time_data,
+                    layout_preferences=config.get('layout_preferences', {})
                 )
                 
-                if strategy:
-                    st.session_state.ai_strategy = strategy
-                    st.session_state.edited_strategy = json.loads(json.dumps(strategy))  # Deep copy
-                    st.success(f"✅ Generated {len(strategy)} slides!")
-                    st.rerun()
-    
-    # ========================================================================
-    # DISPLAY & EDIT STRATEGY
-    # ========================================================================
-    
-    if st.session_state.ai_strategy:
-        st.subheader("📋 Review & Edit Your Presentation")
-        
-        st.info("💡 Expand each slide below to edit titles and content before building the final presentation.")
-        
-        for idx, slide in enumerate(st.session_state.edited_strategy):
-            slide_type = slide.get('type', 'content')
-            
-            # Icon based on type
-            if slide_type == 'bar_chart':
-                icon = "📊"
-            elif slide_type == 'table':
-                icon = "📋"
-            else:
-                icon = "📄"
-            
-            with st.expander(f"{icon} Slide {idx + 1}: {slide.get('title', 'Untitled')} ({slide_type})"):
-                # Edit title
-                new_title = st.text_input(
-                    "Title",
-                    value=slide.get('title', ''),
-                    key=f"title_{idx}"
-                )
-                st.session_state.edited_strategy[idx]['title'] = new_title
+                st.session_state.content = content
+                st.session_state.generated = True
                 
-                # Edit content based on type
-                if slide_type == 'content':
-                    bullets = slide.get('data', {}).get('bullets', [])
-                    st.write("**Bullet Points:**")
-                    
-                    new_bullets = []
-                    for bullet_idx, bullet in enumerate(bullets):
-                        new_bullet = st.text_input(
-                            f"Bullet {bullet_idx + 1}",
-                            value=bullet,
-                            key=f"bullet_{idx}_{bullet_idx}"
+                # Add to chat history
+                st.session_state.chat_history.append({
+                    'role': 'assistant',
+                    'content': f"Created presentation '{content.get('title', 'Untitled')}' with {len(content.get('slides', []))} slides."
+                })
+            
+            st.success(f"✓ Generated {len(content.get('slides', []))} slides!")
+            st.rerun()
+        
+        # Show current content summary
+        if st.session_state.content:
+            content = st.session_state.content
+            
+            st.markdown("---")
+            st.markdown("### 📋 Current Presentation")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Title", content.get('title', 'Untitled')[:30] + "...")
+            with col2:
+                st.metric("Slides", len(content.get('slides', [])))
+            with col3:
+                st.metric("Status", "Ready" if st.session_state.generated else "Draft")
+            
+            # Slide overview
+            with st.expander("📊 Slide Overview", expanded=False):
+                for slide in content.get('slides', []):
+                    layout_emoji = {
+                        'title': '🎯', 'content': '📝', 'two_column': '📊',
+                        'chart': '📈', 'table': '📋', 'quote': '💬',
+                        'timeline': '⏰', 'comparison': '⚖️', 'conclusion': '🎬',
+                        'metrics': '📊', 'image': '🖼️'
+                    }
+                    emoji = layout_emoji.get(slide.get('layout', 'content'), '📄')
+                    st.markdown(f"{emoji} **Slide {slide.get('slide_number', '?')}**: {slide.get('title', 'Untitled')}")
+    
+    with tab2:
+        if st.session_state.content:
+            st.session_state.content = render_editor(st.session_state.content)
+        else:
+            st.info("Generate content first to edit slides")
+    
+    with tab3:
+        if st.session_state.content:
+            template_data = st.session_state.template_data or template_analyzer._get_default_template()
+            
+            # Apply custom settings
+            if config.get('colors'):
+                template_data['colors'].update(config['colors'])
+            
+            render_preview(st.session_state.content, template_data)
+        else:
+            st.info("Generate content first to see preview")
+    
+    with tab4:
+        st.markdown("### 💾 Export Your Presentation")
+        
+        if st.session_state.content:
+            content = st.session_state.content
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("#### PowerPoint Export")
+                st.markdown("Download your presentation as a .pptx file")
+                
+                if st.button("📥 Generate PowerPoint", use_container_width=True):
+                    with st.spinner("Creating PowerPoint..."):
+                        template_data = st.session_state.template_data or template_analyzer._get_default_template()
+                        
+                        # Apply custom settings
+                        custom_settings = {}
+                        if config.get('colors'):
+                            custom_settings['colors'] = config['colors']
+                        if config.get('fonts'):
+                            custom_settings['fonts'] = {
+                                'title': {'size': config['fonts'].get('title_size', 44)},
+                                'body': {'size': config['fonts'].get('body_size', 18)}
+                            }
+                        
+                        generator = PresentationGenerator(template_data)
+                        pptx_file = generator.generate_presentation(content, custom_settings)
+                        
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        filename = f"presentation_{timestamp}.pptx"
+                        
+                        st.download_button(
+                            label="⬇️ Download PPTX",
+                            data=pptx_file,
+                            file_name=filename,
+                            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                            use_container_width=True
                         )
-                        new_bullets.append(new_bullet)
-                    
-                    # Option to add more bullets
-                    if st.button(f"➕ Add Bullet Point", key=f"add_bullet_{idx}"):
-                        new_bullets.append("New bullet point")
-                    
-                    st.session_state.edited_strategy[idx]['data']['bullets'] = new_bullets
-                
-                elif slide_type == 'bar_chart':
-                    st.write("**Chart Data:**")
-                    chart_data = slide.get('data', {})
-                    
-                    categories = chart_data.get('categories', [])
-                    st.write(f"Categories: {', '.join(str(c) for c in categories)}")
-                    
-                    for series_idx, series in enumerate(chart_data.get('series', [])):
-                        st.write(f"**{series.get('name', 'Series')}:** {series.get('values', [])}")
-                    
-                    st.caption("📝 Chart data editing in UI coming soon. Edit JSON below for now.")
-                
-                elif slide_type == 'table':
-                    st.write("**Table Data:**")
-                    table_data = slide.get('data', {})
-                    
-                    headers = table_data.get('headers', [])
-                    rows = table_data.get('rows', [])
-                    
-                    st.write(f"**Headers:** {', '.join(str(h) for h in headers)}")
-                    st.write(f"**Rows:** {len(rows)}")
-                    
-                    for row_idx, row in enumerate(rows[:3]):  # Show first 3 rows
-                        st.write(f"Row {row_idx + 1}: {', '.join(map(str, row))}")
-                    
-                    if len(rows) > 3:
-                        st.caption(f"... and {len(rows) - 3} more rows")
-                    
-                    st.caption("📝 Table data editing in UI coming soon. Edit JSON below for now.")
-        
-        # Advanced: Raw JSON editing
-        with st.expander("🔧 Advanced: Edit Raw JSON"):
-            edited_json = st.text_area(
-                "Edit the complete strategy as JSON",
-                value=json.dumps(st.session_state.edited_strategy, indent=2),
-                height=400
-            )
             
-            if st.button("Apply JSON Changes"):
-                try:
-                    new_strategy = json.loads(edited_json)
-                    st.session_state.edited_strategy = new_strategy
-                    st.success("✅ JSON changes applied!")
-                    st.rerun()
-                except json.JSONDecodeError as e:
-                    st.error(f"❌ Invalid JSON: {str(e)}")
-        
-        # ====================================================================
-        # STEP 5: BUILD FINAL PRESENTATION
-        # ====================================================================
-        
-        st.header("🎯 Step 5: Build Your Presentation")
-        
-        if st.button("🏗️ Build Final Presentation", type="primary", use_container_width=True):
-            with st.spinner("Building your presentation..."):
-                final_prs = build_presentation(
-                    st.session_state.template_bytes,  # Pass bytes, not Presentation object
-                    st.session_state.layout_map,
-                    main_title,
-                    topic,
-                    st.session_state.edited_strategy
-                )
+            with col2:
+                st.markdown("#### Export Options")
                 
-                if final_prs:
-                    # Save to bytes
-                    prs_bytes = io.BytesIO()
-                    final_prs.save(prs_bytes)
-                    prs_bytes.seek(0)
-                    
-                    st.success("✅ Presentation built successfully!")
-                    
-                    # Download button
-                    st.download_button(
-                        label="📥 Download Presentation",
-                        data=prs_bytes,
-                        file_name=f"{main_title.replace(' ', '_')}.pptx",
-                        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                        use_container_width=True
-                    )
-                    
-                    # Summary
-                    st.info(f"""
-                    **Presentation Summary:**
-                    - Title: {main_title}
-                    - Total Slides: {len(st.session_state.edited_strategy) + 1} (including title slide)
-                    - Content Slides: {sum(1 for s in st.session_state.edited_strategy if s['type'] == 'content')}
-                    - Charts: {sum(1 for s in st.session_state.edited_strategy if s['type'] == 'bar_chart')}
-                    - Tables: {sum(1 for s in st.session_state.edited_strategy if s['type'] == 'table')}
-                    """)
+                st.markdown("**Include:**")
+                include_notes = st.checkbox("Speaker Notes", value=True)
+                include_outline = st.checkbox("Presentation Outline", value=False)
+                
+                if include_outline:
+                    st.markdown("---")
+                    st.markdown("**Outline:**")
+                    for slide in content.get('slides', []):
+                        st.markdown(f"- **Slide {slide.get('slide_number')}**: {slide.get('title', 'Untitled')}")
+            
+            # Export summary
+            st.markdown("---")
+            st.markdown("### 📊 Export Summary")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Slides", len(content.get('slides', [])))
+            with col2:
+                charts = sum(1 for s in content.get('slides', []) if s.get('layout') == 'chart')
+                st.metric("Charts", charts)
+            with col3:
+                tables = sum(1 for s in content.get('slides', []) if s.get('layout') == 'table')
+                st.metric("Tables", tables)
+            with col4:
+                st.metric("Format", config.get('export_format', 'PPTX').split()[0])
+        
+        else:
+            st.info("Generate content first to export")
+            
+            st.markdown("""
+            ### How to Export:
+            1. Go to the **Generate** tab
+            2. Enter your presentation topic
+            3. Click **Generate**
+            4. Return here to download
+            """)
+
 
 if __name__ == "__main__":
     main()
