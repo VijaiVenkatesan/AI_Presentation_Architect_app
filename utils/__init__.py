@@ -1,19 +1,20 @@
+"""Utils package initialization"""
 from .template_analyzer import TemplateAnalyzer
-from .ppt_generator import PresentationGenerator
+from .ppt_generator import EnhancedPPTGenerator
+from .pdf_generator import EnhancedPDFGenerator
 from .llm_handler import LLMHandler
 from .search_handler import SearchHandler
 from .chart_generator import ChartGenerator
-from .preview_handler import PreviewHandler
-from .pdf_generator import PDFGenerator
-from .template_cloner import TemplateCloner
+from .validation import SlideValidator
+from .config import AppConfig
 
 __all__ = [
     'TemplateAnalyzer',
-    'PresentationGenerator', 
+    'EnhancedPPTGenerator',
+    'EnhancedPDFGenerator',
     'LLMHandler',
     'SearchHandler',
     'ChartGenerator',
-    'PreviewHandler',
-    'PDFGenerator',
-    'TemplateCloner'
+    'SlideValidator',
+    'AppConfig'
 ]
