@@ -1,6 +1,6 @@
 """
 AI Presentation Architect - Main Application Entry Point
-Version 2.2 - All bugs fixed
+Version 2.3 - Template support fixed
 """
 import streamlit as st
 import os
@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Optional, Dict, List, Any
 from datetime import datetime
+import tempfile
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -56,6 +57,7 @@ def initialize_session_state():
         'presentation_title': '',
         'presentation_topic': '',
         'template_file': None,
+        'template_path': None,
         'current_slide_index': 0,
         'generation_in_progress': False,
         'api_configured': False,
@@ -67,7 +69,7 @@ def initialize_session_state():
         'num_slides': 10,
         'chat_history': [],
         'pending_message': None,
-        'use_template': True,
+        'use_template': False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -128,6 +130,30 @@ def load_autosave():
         except Exception as e:
             logger.warning(f"Failed to load autosave: {e}")
     return False
+
+
+def save_template_file(uploaded_file):
+    """Save uploaded template to temporary file for use"""
+    if uploaded_file is None:
+        return None
+    
+    try:
+        # Create temp directory for templates
+        temp_dir = Path(tempfile.gettempdir()) / 'ppt_templates'
+        temp_dir.mkdir(exist_ok=True)
+        
+        # Save with unique name
+        template_path = temp_dir / f"template_{int(time.time())}.pptx"
+        
+        with open(template_path, 'wb') as f:
+            f.write(uploaded_file.getvalue())
+        
+        logger.info(f"Template saved to: {template_path}")
+        return str(template_path)
+    
+    except Exception as e:
+        logger.error(f"Failed to save template: {e}")
+        return None
 
 
 def generate_presentation_content(prompt: str, num_slides: int) -> bool:
@@ -247,7 +273,7 @@ Return ONLY JSON, no markdown."""
         return False
 
 
-def export_presentation(format_type: str) -> Optional[bytes]:
+def export_presentation(format_type: str, use_template: bool = True) -> Optional[bytes]:
     if not st.session_state.slides:
         st.error("❌ No slides to export")
         return None
@@ -261,18 +287,25 @@ def export_presentation(format_type: str) -> Optional[bytes]:
             return None
         
         if validation['warnings']:
-            st.warning(f"⚠️ {len(validation['warnings'])} warnings - export may have issues")
+            st.info(f"ℹ️ {len(validation['warnings'])} minor issues - export will use fallback layouts")
         
         status_text = st.empty()
         progress_bar = st.progress(0)
         
+        # FIXED: Get template path if enabled
+        template_path = None
+        if use_template and st.session_state.get('template_path'):
+            template_path = st.session_state.template_path
+            logger.info(f"Using template: {template_path}")
+        
         if format_type == 'pptx':
-            status_text.info("📊 Creating PowerPoint...")
-            generator = EnhancedPPTGenerator()
+            status_text.info("📊 Creating PowerPoint..." + (" (with template)" if template_path else ""))
+            # FIXED: Pass template_path to generator
+            generator = EnhancedPPTGenerator(template_path=template_path)
             progress_bar.progress(50)
             output = generator.generate(st.session_state.slides)
             progress_bar.progress(100)
-            status_text.success("✅ PPTX ready!")
+            status_text.success("✅ PPTX ready!" + (" Template applied!" if template_path else ""))
             return output
         elif format_type == 'pdf':
             status_text.info("📄 Creating PDF...")
@@ -367,6 +400,15 @@ def main():
             st.info("Generate slides first")
         else:
             st.markdown('<div class="export-section">', unsafe_allow_html=True)
+            
+            # Template status
+            if st.session_state.get('template_path') and st.session_state.get('use_template'):
+                st.success(f"✅ Using template: {Path(st.session_state.template_path).name}")
+            elif st.session_state.get('template_path'):
+                st.info("ℹ️ Template uploaded but not enabled - check sidebar")
+            else:
+                st.info("📝 Using default PowerPoint template")
+            
             if st.session_state.validation_result:
                 val = st.session_state.validation_result
                 if val['valid']:
@@ -374,14 +416,17 @@ def main():
                 else:
                     st.error(f"❌ {len(val['errors'])} error(s) found")
                 if val['warnings']:
-                    st.warning(f"⚠️ {len(val['warnings'])} warning(s)")
+                    with st.expander(f"ℹ️ {len(val['warnings'])} warnings"):
+                        for warn in val['warnings']:
+                            st.caption(f"• {warn}")
+            
             st.divider()
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown("### 📊 PowerPoint (.pptx)")
                 st.caption("Editable format with full layout support")
                 if st.button("📥 Export as PPTX", type="primary", use_container_width=True):
-                    data = export_presentation('pptx')
+                    data = export_presentation('pptx', use_template=st.session_state.get('use_template', False))
                     if data:
                         st.download_button(
                             label="⬇️ Download PPTX",
@@ -394,7 +439,7 @@ def main():
                 st.markdown("### 📄 PDF Document (.pdf)")
                 st.caption("Print-ready format")
                 if st.button("📥 Export as PDF", type="primary", use_container_width=True):
-                    data = export_presentation('pdf')
+                    data = export_presentation('pdf', use_template=False)
                     if data:
                         st.download_button(
                             label="⬇️ Download PDF",
@@ -408,15 +453,17 @@ def main():
                 st.markdown("""
                 - **PPTX**: Best for editing in PowerPoint or Google Slides
                 - **PDF**: Best for sharing and printing
+                - **Template**: Upload a PPTX template for consistent branding
                 - Charts and tables render as native elements
                 - Speaker notes included in PPTX
                 """)
     
     st.divider()
     st.caption(
-        f"🎨 AI Presentation Architect v2.2 • "
+        f"🎨 AI Presentation Architect v2.3 • "
         f"{len(st.session_state.slides)} slides • "
-        f"API: {'✅ Connected' if st.session_state.api_configured else '❌ Not configured'}"
+        f"API: {'✅ Connected' if st.session_state.api_configured else '❌ Not configured'} • "
+        f"Template: {'✅ Active' if st.session_state.get('template_path') and st.session_state.get('use_template') else '❌ Not used'}"
     )
     
     if st.session_state.slides and st.session_state.last_saved:
