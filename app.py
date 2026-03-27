@@ -135,36 +135,87 @@ Requirements:
 - Exactly {num_slides} slides
 - Use layouts: title, content, two_column, chart, table, quote, metrics, image, timeline, conclusion
 - Return valid JSON array with: slide_number, layout, title, content
-Example: [{{"slide_number": 1, "layout": "title", "title": "Main Title", "content": {{"subtitle": "..."}}}}]"""
+- Content must be an OBJECT with layout-specific fields
+
+Example format:
+[
+    {{"slide_number": 1, "layout": "title", "title": "Main Title", "content": {{"subtitle": "Subtitle here"}}}},
+    {{"slide_number": 2, "layout": "content", "title": "Introduction", "content": {{"main_text": "Text here", "bullet_points": ["Point 1", "Point 2"]}}}},
+    {{"slide_number": 3, "layout": "chart", "title": "Data Chart", "content": {{"chart": {{"title": "Chart Title", "data": {{"2024": "50%", "2025": "75%"}}}}}}}}
+]
+
+Return ONLY the JSON array, no markdown, no explanations."""
         
         outline_response = llm.generate_structured_response(prompt=outline_prompt)
+        
         if not outline_response:
-            raise ValueError("Failed to generate outline")
+            raise ValueError("Failed to generate outline - no response from LLM")
+        
+        # Handle different response formats
+        if isinstance(outline_response, list):
+            slides_list = outline_response
+        elif isinstance(outline_response, dict):
+            # Try common keys
+            slides_list = outline_response.get('slides', outline_response.get('data', outline_response.get('presentation', [])))
+            if not isinstance(slides_list, list):
+                slides_list = [outline_response]
+        else:
+            raise ValueError(f"Unexpected response type: {type(outline_response)}")
+        
+        if not slides_list:
+            raise ValueError("Empty slides list from LLM")
         
         progress_bar.progress(40)
         status_text.info("🔄 Generating slide content...")
         
-        slides_list = outline_response.get('slides', outline_response) if isinstance(outline_response, dict) else outline_response
-        if not isinstance(slides_list, list):
-            slides_list = [outline_response]
-        
         generated_slides = []
-        for i, slide_outline in enumerate(slides_list[:num_slides]):
-            status_text.info(f"🔄 Slide {i+1}/{min(len(slides_list), num_slides)}")
+        slides_to_process = slides_list[:num_slides]
+        
+        for i, slide_outline in enumerate(slides_to_process):
+            if not isinstance(slide_outline, dict):
+                logger.warning(f"Slide {i+1}: skipping non-dict response")
+                continue
             
-            detail_prompt = f"""Expand this slide:
-Slide {slide_outline.get('slide_number', i+1)}: {slide_outline.get('title')}
-Layout: {slide_outline.get('layout')}
+            status_text.info(f"🔄 Slide {i+1}/{len(slides_to_process)}")
+            
+            # Ensure content is a dict
+            if 'content' not in slide_outline or not isinstance(slide_outline.get('content'), dict):
+                slide_outline['content'] = {}
+            
+            # Generate detailed content for complex layouts
+            layout = slide_outline.get('layout', 'content')
+            if layout in ['chart', 'table', 'metrics', 'timeline']:
+                detail_prompt = f"""Expand this slide with detailed {layout} data:
+Slide: {slide_outline.get('title', 'Untitled')}
 Topic: {prompt}
-Return JSON with: title, layout, content, speaker_notes"""
+
+Return JSON with content object containing:
+- For chart: {{"chart": {{"title": "...", "description": "...", "data": {{"key": "value"}}}}}}
+- For table: {{"table": {{"headers": ["Col1", "Col2"], "data": [["row1col1", "row1col2"]]}}}}
+- For metrics: {{"key_metrics": [{{"label": "Metric", "value": "100"}}]}}
+- For timeline: {{"timeline_items": [{{"date": "2024", "description": "Event"}}]}}
+
+Return ONLY JSON, no markdown."""
+                
+                detail_response = llm.generate_structured_response(prompt=detail_prompt)
+                if detail_response and isinstance(detail_response, dict):
+                    # Merge content
+                    if 'content' in detail_response and isinstance(detail_response['content'], dict):
+                        slide_outline['content'].update(detail_response['content'])
             
-            slide_content = llm.generate_structured_response(prompt=detail_prompt)
-            if slide_content:
-                slide_content['slide_number'] = i + 1
-                generated_slides.append(slide_content)
+            # Ensure required fields
+            slide_outline['slide_number'] = i + 1
+            if 'title' not in slide_outline:
+                slide_outline['title'] = f"Slide {i+1}"
+            if 'layout' not in slide_outline:
+                slide_outline['layout'] = 'content'
             
-            progress_bar.progress(40 + (i + 1) * 60 // min(len(slides_list), num_slides))
+            generated_slides.append(slide_outline)
+            progress_bar.progress(40 + (i + 1) * 60 // len(slides_to_process))
             time.sleep(0.2)
+        
+        if not generated_slides:
+            raise ValueError("No valid slides generated")
         
         progress_bar.progress(90)
         status_text.info("🔄 Validating...")
@@ -172,11 +223,16 @@ Return JSON with: title, layout, content, speaker_notes"""
         validation = SlideValidator.validate_slides(generated_slides)
         st.session_state.validation_result = validation
         
+        if validation['errors']:
+            logger.warning(f"Validation errors: {validation['errors']}")
+            for error in validation['errors'][:3]:
+                st.warning(f"⚠️ {error}")
+        
         st.session_state.slides = generated_slides
         st.session_state.presentation_title = st.session_state.presentation_title or prompt[:50]
         
         progress_bar.progress(100)
-        status_text.success("✅ Generated!")
+        status_text.success(f"✅ Generated {len(generated_slides)} slides!")
         
         auto_save_presentation()
         time.sleep(0.5)
