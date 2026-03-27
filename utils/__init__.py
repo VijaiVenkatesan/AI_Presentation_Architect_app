@@ -4,6 +4,7 @@ from .llm_handler import LLMHandler
 from .search_handler import SearchHandler
 from .chart_generator import ChartGenerator
 from .preview_handler import PreviewHandler
+from .pdf_generator import PDFGenerator
 
 __all__ = [
     'TemplateAnalyzer',
@@ -11,5 +12,6 @@ __all__ = [
     'LLMHandler',
     'SearchHandler',
     'ChartGenerator',
-    'PreviewHandler'
+    'PreviewHandler',
+    'PDFGenerator'
 ]
