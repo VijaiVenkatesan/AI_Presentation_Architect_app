@@ -30,12 +30,23 @@ class EnhancedPPTGenerator:
     }
     
     def __init__(self, template_path=None):
-        if template_path and Path(template_path).exists():
-            self.prs = Presentation(template_path)
-        else:
+    if template_path:
+        try:
+            from pathlib import Path
+            if Path(template_path).exists():
+                self.prs = Presentation(template_path)
+                logger.info(f"Template loaded: {template_path}")
+                logger.info(f"Template has {len(self.prs.slide_layouts)} layouts")
+            else:
+                logger.warning(f"Template not found: {template_path}")
+                self.prs = Presentation()
+        except Exception as e:
+            logger.error(f"Failed to load template: {e}")
             self.prs = Presentation()
-        self.slide_width = self.prs.slide_width
-        self.slide_height = self.prs.slide_height
+    else:
+        self.prs = Presentation()
+    self.slide_width = self.prs.slide_width
+    self.slide_height = self.prs.slide_height
     
     def generate(self, slides_data):
         for slide_data in slides_data:
