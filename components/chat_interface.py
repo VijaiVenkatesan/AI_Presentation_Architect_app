@@ -2,6 +2,7 @@
 import streamlit as st
 from typing import Dict, List, Any
 
+
 def render_chat_interface():
     llm = st.session_state.get('llm_handler')
     config = st.session_state.get('config')
@@ -14,7 +15,6 @@ def render_chat_interface():
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
     
-    # Check for pending message from quick actions
     if st.session_state.get('pending_message'):
         msg = st.session_state.pending_message
         st.session_state.pending_message = None
@@ -33,7 +33,6 @@ def render_chat_interface():
                 st.session_state.chat_history.append({'role': 'assistant', 'content': f"Error: {e}"})
                 st.rerun()
     
-    # FIXED: High contrast styling
     st.markdown("""
     <style>
     .chat-msg { padding:1.5rem; border-radius:12px; margin-bottom:1.5rem; display:flex; gap:1rem; box-shadow:0 2px 8px rgba(0,0,0,0.1); }
@@ -58,7 +57,6 @@ def render_chat_interface():
     
     st.divider()
     
-    # Quick action buttons
     st.markdown("### ⚡ Quick Actions")
     col_a, col_b, col_c = st.columns(3)
     with col_a:
@@ -76,7 +74,6 @@ def render_chat_interface():
     
     st.divider()
     
-    # Text input
     st.subheader("✉️ Send a Message")
     col1, col2 = st.columns([5, 1])
     with col1:
