@@ -1,10 +1,11 @@
 """
 Sidebar Configuration Component
-Fixed: Template upload and usage
+Fixed: No circular imports
 """
 import streamlit as st
 from typing import Dict
-from app import save_template_file
+from utils.file_handler import save_template_file
+
 
 def render_sidebar() -> Dict:
     result = {'generate': False, 'topic': '', 'num_slides': 10}
@@ -49,7 +50,7 @@ def render_sidebar() -> Dict:
             value=st.session_state.get('num_slides', 10)
         )
         
-        # Template upload - FIXED
+        # Template upload
         st.subheader("📁 Template (Optional)")
         template_file = st.file_uploader(
             "Upload PowerPoint Template",
@@ -64,14 +65,12 @@ def render_sidebar() -> Dict:
                 st.session_state.template_file = template_file
                 st.session_state.template_path = template_path
                 st.success(f"✅ Template uploaded: {template_file.name}")
-                
-                # Show template info
                 st.info(f"📊 Size: {template_file.size / 1024:.1f} KB")
         else:
             st.session_state.template_file = None
             st.session_state.template_path = None
         
-        # Template usage toggle - FIXED
+        # Template usage toggle
         st.divider()
         if st.session_state.get('template_path'):
             st.session_state.use_template = st.checkbox(
@@ -162,8 +161,8 @@ def render_sidebar() -> Dict:
             1. Enter your Groq API key (or set in secrets)
             2. Enter a presentation topic
             3. Choose number of slides (3-20)
-            4. **Optional**: Upload a PPTX template
-            5. **Enable** "Use uploaded template" checkbox
+            4. Optional: Upload a PPTX template
+            5. Enable "Use uploaded template" checkbox
             6. Click "Generate Presentation"
             
             ### Template Tips
