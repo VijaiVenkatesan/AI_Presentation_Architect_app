@@ -5,6 +5,7 @@ from .search_handler import SearchHandler
 from .chart_generator import ChartGenerator
 from .preview_handler import PreviewHandler
 from .pdf_generator import PDFGenerator
+from .template_cloner import TemplateCloner
 
 __all__ = [
     'TemplateAnalyzer',
@@ -13,5 +14,6 @@ __all__ = [
     'SearchHandler',
     'ChartGenerator',
     'PreviewHandler',
-    'PDFGenerator'
+    'PDFGenerator',
+    'TemplateCloner'
 ]
