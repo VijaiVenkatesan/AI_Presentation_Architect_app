@@ -57,6 +57,7 @@ def render_chat_interface(llm_handler: LLMHandler, model: str, on_generate: Opti
     
     for col, (label, template) in zip(cols, prompts):
         with col:
+            # Note: use_container_width is OK for st.button() - only deprecated for st.image()
             if st.button(label, use_container_width=True):
                 st.session_state.quick_prompt = template
     
@@ -73,6 +74,7 @@ def render_chat_interface(llm_handler: LLMHandler, model: str, on_generate: Opti
     col1, col2 = st.columns([4, 1])
     
     with col2:
+        # Note: use_container_width is OK for st.button()
         generate_clicked = st.button("🚀 Generate", type="primary", use_container_width=True)
     
     if generate_clicked and user_input:
