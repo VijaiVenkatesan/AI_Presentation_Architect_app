@@ -1,4 +1,4 @@
-"""Enhanced PowerPoint Generator - All fixes applied"""
+"""Enhanced PowerPoint Generator - All syntax fixed"""
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 import io, base64, logging, re
@@ -11,37 +11,54 @@ from pptx.enum.shapes import MSO_SHAPE
 logger = logging.getLogger(__name__)
 
 class EnhancedPPTGenerator:
-    LAYOUT_MAP = {'title': 0, 'content': 1, 'two_column': 1, 'chart': 1, 'table': 1, 
-                  'quote': 1, 'metrics': 1, 'timeline': 1, 'comparison': 1, 'conclusion': 1, 'image': 1}
+    LAYOUT_MAP = {
+        'title': 0, 'content': 1, 'two_column': 1, 'chart': 1, 'table': 1,
+        'quote': 1, 'metrics': 1, 'timeline': 1, 'comparison': 1, 'conclusion': 1, 'image': 1
+    }
     
     def __init__(self, template_path: Optional[str] = None):
-        self.prs = Presentation(template_path) if template_path and Path(template_path).exists() else Presentation()
-        self.slide_width, self.slide_height = self.prs.slide_width, self.prs.slide_height
+        if template_path and Path(template_path).exists():
+            self.prs = Presentation(template_path)
+        else:
+            self.prs = Presentation()
+        self.slide_width = self.prs.slide_width
+        self.slide_height = self.prs.slide_height
     
-    def generate(self, slides_ List[Dict[str, Any]]) -> io.BytesIO:
-        for slide_data in slides_
-            try: self._create_slide(slide_data)
+    def generate(self, slides_data: List[Dict[str, Any]]) -> io.BytesIO:
+        for slide_data in slides_data:
+            try:
+                self._create_slide(slide_data)
             except Exception as e:
                 logger.error(f"Slide {slide_data.get('slide_number')} failed: {e}", exc_info=True)
-                self._create_error_slide(slide_data.get('slide_number', '?'), slide_data.get('layout', '?'), str(e))
+                self._create_error_slide(
+                    slide_data.get('slide_number', '?'),
+                    slide_data.get('layout', '?'),
+                    str(e)
+                )
         output = io.BytesIO()
         self.prs.save(output)
         output.seek(0)
         return output
     
-    def _create_slide(self, slide_ Dict[str, Any]):
-        layout_idx = min(self.LAYOUT_MAP.get(slide_data.get('layout', 'content'), 1), len(self.prs.slide_layouts) - 1)
+    def _create_slide(self, slide_data: Dict[str, Any]):
+        layout_type = slide_data.get('layout', 'content')
+        layout_idx = self.LAYOUT_MAP.get(layout_type, 1)
+        if layout_idx >= len(self.prs.slide_layouts):
+            layout_idx = 1
         slide = self.prs.slides.add_slide(self.prs.slide_layouts[layout_idx])
-        if slide_data.get('title') and slide.shapes.title: slide.shapes.title.text = slide_data['title']
-        handler = getattr(self, f'_handle_{slide_data.get("layout", "content")}_layout', self._handle_content_layout)
+        if slide_data.get('title') and slide.shapes.title:
+            slide.shapes.title.text = slide_data['title']
+        handler = getattr(self, f'_handle_{layout_type}_layout', self._handle_content_layout)
         handler(slide, slide_data)
     
-    def _handle_title_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_title_layout(self, slide, slide_data: Dict[str, Any]):
         content = slide_data.get('content', {})
-        if slide.shapes.title: slide.shapes.title.text = slide_data.get('title', '')
-        if len(slide.placeholders) > 1: slide.placeholders[1].text = slide_data.get('subtitle', content.get('subtitle', ''))
+        if slide.shapes.title:
+            slide.shapes.title.text = slide_data.get('title', '')
+        if len(slide.placeholders) > 1:
+            slide.placeholders[1].text = slide_data.get('subtitle', content.get('subtitle', ''))
     
-    def _handle_content_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_content_layout(self, slide, slide_data: Dict[str, Any]):
         content = slide_data.get('content', {})
         if len(slide.shapes) > 1 and slide.shapes[1].has_text_frame:
             tf = slide.shapes[1].text_frame
@@ -56,157 +73,239 @@ class EnhancedPPTGenerator:
                 p.font.size = Pt(16)
             if slide_data.get('speaker_notes'):
                 notes = slide_data['speaker_notes']
-                if isinstance(notes, dict): notes = str(notes)
-                elif isinstance(notes, list): notes = "\n".join(notes)
+                if isinstance(notes, dict):
+                    notes = str(notes)
+                elif isinstance(notes, list):
+                    notes = "\n".join([str(n) for n in notes])
                 slide.notes_slide.notes_text_frame.text = str(notes)
     
-    def _handle_two_column_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_two_column_layout(self, slide, slide_data: Dict[str, Any]):
         content = slide_data.get('content', {})
-        if len(slide.shapes) > 1: slide.shapes._spTree.remove(slide.shapes[1]._element)
-        top, bottom, margin = Inches(2.0), Inches(0.5), Inches(0.5)
+        if len(slide.shapes) > 1:
+            slide.shapes._spTree.remove(slide.shapes[1]._element)
+        top = Inches(2.0)
+        bottom = Inches(0.5)
+        margin = Inches(0.5)
         col_w = (self.slide_width - 2*margin - Inches(0.3)) / 2
-        def add_col(left, items):
-            tb = slide.shapes.add_textbox(left, top, col_w, self.slide_height - top - bottom)
+        
+        def add_col(left_pos, items):
+            tb = slide.shapes.add_textbox(left_pos, top, col_w, self.slide_height - top - bottom)
             tf = tb.text_frame
             tf.word_wrap = True
-            for i, item in enumerate(items if isinstance(items, list) else [items]):
+            item_list = items if isinstance(items, list) else [items]
+            for i, item in enumerate(item_list):
                 p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
                 p.text = f"- {item}"
                 p.font.size = Pt(14)
+        
         add_col(margin, content.get('left_column', []))
         add_col(margin + col_w + Inches(0.3), content.get('right_column', []))
     
-    def _handle_chart_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_chart_layout(self, slide, slide_data: Dict[str, Any]):
         content = slide_data.get('content', {})
         chart = content.get('chart', {})
-        if not chart: return self._handle_content_layout(slide, slide_data)
-        if len(slide.shapes) > 1: slide.shapes._spTree.remove(slide.shapes[1]._element)
-        w, h = self.slide_width * 0.8, self.slide_height * 0.55
+        if not chart:
+            return self._handle_content_layout(slide, slide_data)
+        if len(slide.shapes) > 1:
+            slide.shapes._spTree.remove(slide.shapes[1]._element)
+        w = self.slide_width * 0.8
+        h = self.slide_height * 0.55
         shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, (self.slide_width-w)/2, Inches(2.0), w, h)
-        shape.fill.solid(); shape.fill.fore_color.rgb = RGBColor(240,240,240)
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = RGBColor(240, 240, 240)
         tf = shape.text_frame
         tf.text = f"📊 {chart.get('title', 'Chart')}"
-        tf.paragraphs[0].font.size, tf.paragraphs[0].font.bold = Pt(16), True
-        if chart.get('description'): tf.add_paragraph().text = f"\n{chart['description']}"
+        tf.paragraphs[0].font.size = Pt(16)
+        tf.paragraphs[0].font.bold = True
+        if chart.get('description'):
+            tf.add_paragraph().text = f"\n{chart['description']}"
         if chart.get('data'):
             info = slide.shapes.add_textbox(Inches(0.5), Inches(2.0)+h+Inches(0.2), self.slide_width-Inches(1), Inches(1.5))
             tf2 = info.text_frame
-            tf2.paragraphs[0].text = "Data:"; tf2.paragraphs[0].font.bold = True
-            for k,v in chart['data'].items(): tf2.add_paragraph().text = f"  • {k}: {v}"
+            tf2.paragraphs[0].text = "Data:"
+            tf2.paragraphs[0].font.bold = True
+            for k, v in chart['data'].items():
+                tf2.add_paragraph().text = f"  • {k}: {v}"
     
-    def _handle_table_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_table_layout(self, slide, slide_data: Dict[str, Any]):
         content = slide_data.get('content', {})
         table = content.get('table', {})
-        if not table or not isinstance(table, dict): return self._handle_content_layout(slide, slide_data)
-        headers, data = table.get('headers', []), table.get('data', [])
+        if not table or not isinstance(table, dict):
+            return self._handle_content_layout(slide, slide_data)
+        headers = table.get('headers', [])
+        data = table.get('data', [])
         if not headers or not isinstance(headers, list) or not data or not isinstance(data, list):
             return self._handle_content_layout(slide, slide_data)
-        if len(slide.shapes) > 1: slide.shapes._spTree.remove(slide.shapes[1]._element)
-        rows, cols = len(data) + 1, len(headers)
-        if cols == 0: return
-        tw, th = self.slide_width * 0.9, self.slide_height * 0.6
+        if len(slide.shapes) > 1:
+            slide.shapes._spTree.remove(slide.shapes[1]._element)
+        rows = len(data) + 1
+        cols = len(headers)
+        if cols == 0:
+            return
+        tw = self.slide_width * 0.9
+        th = self.slide_height * 0.6
         ppt_table = slide.shapes.add_table(rows, cols, (self.slide_width-tw)/2, Inches(1.8), tw, th).table
-        for i in range(cols): ppt_table.columns[i].width = tw / cols
+        for i in range(cols):
+            ppt_table.columns[i].width = tw / cols
         for i, h in enumerate(headers):
             c = ppt_table.cell(0, i)
-            c.text = str(h); c.text_frame.paragraphs[0].font.bold = True; c.text_frame.paragraphs[0].font.size = Pt(12)
+            c.text = str(h)
+            c.text_frame.paragraphs[0].font.bold = True
+            c.text_frame.paragraphs[0].font.size = Pt(12)
         for ri, row in enumerate(data, 1):
-            if not isinstance(row, (list, tuple)): row = [row]
+            if not isinstance(row, (list, tuple)):
+                row = [row]
             for ci, val in enumerate(row):
                 if ci < cols:
                     c = ppt_table.cell(ri, ci)
                     c.text = str(val) if val is not None else ""
                     c.text_frame.paragraphs[0].font.size = Pt(10)
     
-    def _handle_quote_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_quote_layout(self, slide, slide_data: Dict[str, Any]):
         content = slide_data.get('content', {})
-        if len(slide.shapes) > 1: slide.shapes._spTree.remove(slide.shapes[1]._element)
-        # FIXED: Use add_textbox instead of MSO_SHAPE.TEXT_BOX
+        if len(slide.shapes) > 1:
+            slide.shapes._spTree.remove(slide.shapes[1]._element)
         tb = slide.shapes.add_textbox(Inches(0.8), Inches(2.2), self.slide_width-Inches(1.6), Inches(2.5))
-        tb.fill.solid(); tb.fill.fore_color.rgb = RGBColor(245,245,245)
-        tb.line.color.rgb = RGBColor(200,200,200)
-        tf = tb.text_frame; tf.word_wrap = True
+        tb.fill.solid()
+        tb.fill.fore_color.rgb = RGBColor(245, 245, 245)
+        tb.line.color.rgb = RGBColor(200, 200, 200)
+        tf = tb.text_frame
+        tf.word_wrap = True
         p = tf.paragraphs[0]
         p.text = '"' + content.get('quote', 'Quote text') + '"'
-        p.font.size, p.font.italic = Pt(20), True
+        p.font.size = Pt(20)
+        p.font.italic = True
         if content.get('quote_author'):
             pa = tf.add_paragraph()
-            pa.text = f"- {content['quote_author']}"; pa.font.size = Pt(14); pa.alignment = PP_ALIGN.RIGHT
+            pa.text = f"- {content['quote_author']}"
+            pa.font.size = Pt(14)
+            pa.alignment = PP_ALIGN.RIGHT
     
-    def _handle_metrics_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_metrics_layout(self, slide, slide_data: Dict[str, Any]):
         content = slide_data.get('content', {})
         metrics = content.get('key_metrics', [])
-        if not metrics: return self._handle_content_layout(slide, slide_data)
-        if len(slide.shapes) > 1: slide.shapes._spTree.remove(slide.shapes[1]._element)
+        if not metrics:
+            return self._handle_content_layout(slide, slide_data)
+        if len(slide.shapes) > 1:
+            slide.shapes._spTree.remove(slide.shapes[1]._element)
         n = len(metrics)
         bw = (self.slide_width - Inches(1)) / n - Inches(0.2)
-        bh, top, left = Inches(2.5), Inches(2.2), Inches(0.5)
+        bh = Inches(2.5)
+        top = Inches(2.2)
+        left = Inches(0.5)
         for i, m in enumerate(metrics):
             box = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, left + i*(bw+Inches(0.2)), top, bw, bh)
-            box.fill.solid(); box.fill.fore_color.rgb = RGBColor(79,129,189)
-            tf = box.text_frame; tf.clear()
-            pv = tf.paragraphs[0]; pv.text = m.get('value', 'N/A'); pv.font.size, pv.font.bold = Pt(28), True; pv.alignment = PP_ALIGN.CENTER
-            pl = tf.add_paragraph(); pl.text = m.get('label', ''); pl.font.size = Pt(14); pl.alignment = PP_ALIGN.CENTER
+            box.fill.solid()
+            box.fill.fore_color.rgb = RGBColor(79, 129, 189)
+            tf = box.text_frame
+            tf.clear()
+            pv = tf.paragraphs[0]
+            pv.text = m.get('value', 'N/A')
+            pv.font.size = Pt(28)
+            pv.font.bold = True
+            pv.alignment = PP_ALIGN.CENTER
+            pl = tf.add_paragraph()
+            pl.text = m.get('label', '')
+            pl.font.size = Pt(14)
+            pl.alignment = PP_ALIGN.CENTER
     
-    def _handle_timeline_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_timeline_layout(self, slide, slide_data: Dict[str, Any]):
         content = slide_data.get('content', {})
         items = content.get('timeline_items', [])
-        if not items: return self._handle_content_layout(slide, slide_data)
-        if len(slide.shapes) > 1: slide.shapes._spTree.remove(slide.shapes[1]._element)
-        tw, tl, ty = self.slide_width * 0.9, (self.slide_width - self.slide_width*0.9)/2, Inches(3.0)
+        if not items:
+            return self._handle_content_layout(slide, slide_data)
+        if len(slide.shapes) > 1:
+            slide.shapes._spTree.remove(slide.shapes[1]._element)
+        tw = self.slide_width * 0.9
+        tl = (self.slide_width - tw) / 2
+        ty = Inches(3.0)
         line = slide.shapes.add_shape(MSO_SHAPE.LINE, tl, ty+Inches(0.5), tw, Inches(0.05))
-        line.line.color.rgb, line.line.width = RGBColor(79,129,189), Pt(3)
+        line.line.color.rgb = RGBColor(79, 129, 189)
+        line.line.width = Pt(3)
         spacing = tw / max(len(items), 1)
         for i, it in enumerate(items):
             xp = tl + i*spacing + spacing/2
             mk = slide.shapes.add_shape(MSO_SHAPE.OVAL, xp-Inches(0.25), ty+Inches(0.3), Inches(0.5), Inches(0.5))
-            mk.fill.solid(); mk.fill.fore_color.rgb = RGBColor(79,129,189)
+            mk.fill.solid()
+            mk.fill.fore_color.rgb = RGBColor(79, 129, 189)
             tb = slide.shapes.add_textbox(xp-Inches(1), ty-Inches(0.8), Inches(2), Inches(0.6))
-            p = tb.text_frame.paragraphs[0]; p.text = it.get('date', ''); p.font.bold, p.font.size = True, Pt(12); p.alignment = PP_ALIGN.CENTER
+            p = tb.text_frame.paragraphs[0]
+            p.text = it.get('date', '')
+            p.font.bold = True
+            p.font.size = Pt(12)
+            p.alignment = PP_ALIGN.CENTER
             if it.get('description'):
                 db = slide.shapes.add_textbox(xp-Inches(1.5), ty+Inches(1.0), Inches(3), Inches(1.5))
-                dp = db.text_frame.paragraphs[0]; dp.text = it['description']; dp.font.size = Pt(10); dp.alignment = PP_ALIGN.CENTER
+                dp = db.text_frame.paragraphs[0]
+                dp.text = it['description']
+                dp.font.size = Pt(10)
+                dp.alignment = PP_ALIGN.CENTER
     
-    def _handle_image_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_image_layout(self, slide, slide_data: Dict[str, Any]):
         content = slide_data.get('content', {})
         img = content.get('image', '')
-        if len(slide.shapes) > 1: slide.shapes._spTree.remove(slide.shapes[1]._element)
-        iw, ih = self.slide_width*0.7, self.slide_height*0.55
-        lp, tp = (self.slide_width-iw)/2, Inches(1.8)
+        if len(slide.shapes) > 1:
+            slide.shapes._spTree.remove(slide.shapes[1]._element)
+        iw = self.slide_width * 0.7
+        ih = self.slide_height * 0.55
+        lp = (self.slide_width - iw) / 2
+        tp = Inches(1.8)
         try:
             if isinstance(img, str):
-                if img.startswith('http'): raise ValueError("URL not supported")
+                if img.startswith('http://') or img.startswith('https://'):
+                    raise ValueError("URL not supported")
                 if img.startswith('image'):
                     m = re.search(r'image/\w+;base64,(.+)', img)
-                    if m: slide.shapes.add_picture(io.BytesIO(base64.b64decode(m.group(1))), lp, tp, width=iw, height=ih)
-                    else: raise ValueError("Invalid base64")
-                elif Path(img).exists(): slide.shapes.add_picture(img, lp, tp, width=iw, height=ih)
-                else: raise ValueError("Not found")
-            elif isinstance(img, bytes): slide.shapes.add_picture(io.BytesIO(img), lp, tp, width=iw, height=ih)
-            else: raise ValueError(f"Bad type: {type(img)}")
+                    if m:
+                        slide.shapes.add_picture(io.BytesIO(base64.b64decode(m.group(1))), lp, tp, width=iw, height=ih)
+                    else:
+                        raise ValueError("Invalid base64")
+                elif Path(img).exists():
+                    slide.shapes.add_picture(img, lp, tp, width=iw, height=ih)
+                else:
+                    raise ValueError("Not found")
+            elif isinstance(img, bytes):
+                slide.shapes.add_picture(io.BytesIO(img), lp, tp, width=iw, height=ih)
+            else:
+                raise ValueError(f"Bad type: {type(img)}")
         except Exception as e:
             logger.warning(f"Image placeholder: {e}")
             ph = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, lp, tp, iw, ih)
-            ph.fill.solid(); ph.fill.fore_color.rgb = RGBColor(240,240,240)
-            tf = ph.text_frame; tf.text = "🖼️ Image Placeholder"; tf.paragraphs[0].font.size = Pt(16); tf.paragraphs[0].alignment = PP_ALIGN.CENTER
+            ph.fill.solid()
+            ph.fill.fore_color.rgb = RGBColor(240, 240, 240)
+            tf = ph.text_frame
+            tf.text = "🖼️ Image Placeholder"
+            tf.paragraphs[0].font.size = Pt(16)
+            tf.paragraphs[0].alignment = PP_ALIGN.CENTER
     
-    def _handle_conclusion_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_conclusion_layout(self, slide, slide_data: Dict[str, Any]):
         content = slide_data.get('content', {})
-        if len(slide.shapes) > 1: slide.shapes._spTree.remove(slide.shapes[1]._element)
+        if len(slide.shapes) > 1:
+            slide.shapes._spTree.remove(slide.shapes[1]._element)
         cb = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.5), Inches(2.0), self.slide_width-Inches(1), Inches(3.0))
-        cb.fill.solid(); cb.fill.fore_color.rgb = RGBColor(79,129,189)
-        tf = cb.text_frame; tf.word_wrap = True
+        cb.fill.solid()
+        cb.fill.fore_color.rgb = RGBColor(79, 129, 189)
+        tf = cb.text_frame
+        tf.word_wrap = True
         if content.get('main_text'):
-            p = tf.paragraphs[0]; p.text = content['main_text']; p.font.size, p.font.bold = Pt(24), True; p.alignment = PP_ALIGN.CENTER
+            p = tf.paragraphs[0]
+            p.text = content['main_text']
+            p.font.size = Pt(24)
+            p.font.bold = True
+            p.alignment = PP_ALIGN.CENTER
         for b in content.get('bullet_points', []):
-            p = tf.add_paragraph(); p.text = f"- {b}"; p.font.size = Pt(16); p.alignment = PP_ALIGN.CENTER
+            p = tf.add_paragraph()
+            p.text = f"- {b}"
+            p.font.size = Pt(16)
+            p.alignment = PP_ALIGN.CENTER
     
     def _create_error_slide(self, num: int, layout: str, err: str):
         idx = 1 if len(self.prs.slide_layouts) > 1 else 0
         slide = self.prs.slides.add_slide(self.prs.slide_layouts[idx])
-        if slide.shapes.title: slide.shapes.title.text = f"⚠️ Slide {num} Failed"
+        if slide.shapes.title:
+            slide.shapes.title.text = f"Slide {num} Failed"
         if len(slide.shapes) > 1:
             tf = slide.shapes[1].text_frame
             tf.text = f"Layout: {layout}\nError: {err}\nCheck logs."
             tf.paragraphs[0].font.size = Pt(14)
-            tf.paragraphs[0].font.color.rgb = RGBColor(255,0,0)
+            tf.paragraphs[0].font.color.rgb = RGBColor(255, 0, 0)
