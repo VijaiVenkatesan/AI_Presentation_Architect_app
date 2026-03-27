@@ -1,212 +1,83 @@
-"""
-AI Chat Interface Component
-Updated to get llm_handler and model from session_state
-"""
+"""AI Chat Interface"""
 import streamlit as st
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 import time
 
 def render_chat_interface():
-    """Render the AI chat interface - gets llm_handler from session_state"""
+    llm = st.session_state.get('llm_handler')
+    config = st.session_state.get('config')
+    model = config.default_model if config else "llama-3.3-70b-versatile"
     
-    # Get llm_handler from session_state
-    llm_handler = st.session_state.get('llm_handler', None)
-    model = st.session_state.get('config', None)
-    model_name = model.default_model if model else "llama-3.3-70b-versatile"
-    
-    if not llm_handler:
-        st.error("❌ LLM Handler not initialized. Please configure API key first.")
+    if not llm or not llm.is_configured():
+        st.error("❌ API not configured")
         return
     
-    if not llm_handler.is_configured():
-        st.error("❌ API not configured. Please set GROQ_API_KEY in sidebar.")
-        return
+    if 'chat_history' not in st.session_state: st.session_state.chat_history = []
     
-    # Initialize chat history
-    if 'chat_history' not in st.session_state:
-        st.session_state.chat_history = []
-    
-    # Chat interface header
     st.markdown("""
     <style>
-    .chat-message {
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin-bottom: 1rem;
-        display: flex;
-        gap: 1rem;
-    }
-    .chat-message.user {
-        background-color: #e3f2fd;
-        border-left: 4px solid #2196F3;
-    }
-    .chat-message.assistant {
-        background-color: #f5f5f5;
-        border-left: 4px solid #4CAF50;
-    }
-    .chat-avatar {
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 20px;
-    }
-    .chat-content {
-        flex: 1;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    .chat-msg { padding:1rem; border-radius:0.5rem; margin-bottom:1rem; display:flex; gap:1rem; }
+    .chat-msg.user { background:#e3f2fd; border-left:4px solid #2196F3; }
+    .chat-msg.assistant { background:#f5f5f5; border-left:4px solid #4CAF50; }
+    .chat-avatar { width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:20px; }
+    .chat-content { flex:1; }
+    </style>""", unsafe_allow_html=True)
     
-    # Display chat history
-    st.subheader("💬 Chat History")
+    st.subheader("💬 Chat")
+    if not st.session_state.chat_history: st.info("👋 Ask me to help with your presentation!")
     
-    if not st.session_state.chat_history:
-        st.info("👋 Start a conversation! Ask me to help with your presentation.")
-    
-    for message in st.session_state.chat_history:
-        role = message.get('role', 'user')
-        content = message.get('content', '')
-        
-        avatar = "👤" if role == 'user' else "🤖"
-        css_class = "user" if role == 'user' else "assistant"
-        
-        st.markdown(f"""
-        <div class="chat-message {css_class}">
-            <div class="chat-avatar">{avatar}</div>
-            <div class="chat-content">
-                <strong>{'You' if role == 'user' else 'AI Assistant'}</strong>
-                <p>{content}</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    for msg in st.session_state.chat_history:
+        role, content = msg.get('role','user'), msg.get('content','')
+        avatar = "👤" if role=='user' else "🤖"
+        css = "user" if role=='user' else "assistant"
+        st.markdown(f"""<div class="chat-msg {css}"><div class="chat-avatar">{avatar}</div><div class="chat-content"><strong>{'You' if role=='user' else 'AI'}</strong><p>{content}</p></div></div>""", unsafe_allow_html=True)
     
     st.divider()
+    st.subheader("✉️ Message")
+    col1, col2 = st.columns([5,1])
+    with col1: ui = st.text_input("Your message", placeholder="e.g., Add a chart slide", label_visibility="collapsed", key="chat_inp")
+    with col2: sb = st.button("📤 Send", use_container_width=True)
     
-    # Chat input
-    st.subheader("✉️ Send a Message")
-    
-    col1, col2 = st.columns([5, 1])
-    
-    with col1:
-        user_input = st.text_input(
-            "Your message",
-            placeholder="e.g., Add a slide about AI trends",
-            label_visibility="collapsed",
-            key="chat_input"
-        )
-    
-    with col2:
-        send_button = st.button("📤 Send", use_container_width=True)
-    
-    # Quick action buttons
-    st.markdown("### ⚡ Quick Actions")
+    st.markdown("### ⚡ Quick")
     col_a, col_b, col_c = st.columns(3)
-    
     with col_a:
-        if st.button("📊 Add Chart Slide", use_container_width=True):
-            user_input = "Add a chart slide showing AI adoption trends"
-            st.session_state.chat_input = user_input
+        if st.button("📊 Add Chart", use_container_width=True):
+            st.session_state.chat_inp = "Add a chart slide showing trends"
             st.rerun()
-    
     with col_b:
-        if st.button("📋 Add Table Slide", use_container_width=True):
-            user_input = "Add a table slide comparing AI solutions"
-            st.session_state.chat_input = user_input
+        if st.button("📋 Add Table", use_container_width=True):
+            st.session_state.chat_inp = "Add a comparison table"
             st.rerun()
-    
     with col_c:
-        if st.button("🎯 Improve Content", use_container_width=True):
-            user_input = "Improve the content of the current slides"
-            st.session_state.chat_input = user_input
+        if st.button("🎯 Improve", use_container_width=True):
+            st.session_state.chat_inp = "Improve the current slides"
             st.rerun()
     
     st.divider()
     
-    # Process message
-    if send_button and user_input:
-        # Add user message to history
-        st.session_state.chat_history.append({
-            'role': 'user',
-            'content': user_input
-        })
-        
-        # Show processing indicator
-        with st.spinner("🤔 AI is thinking..."):
+    if sb and ui:
+        st.session_state.chat_history.append({'role':'user','content':ui})
+        with st.spinner("🤔 Thinking..."):
             try:
-                # Build context from current presentation
-                context = ""
-                if st.session_state.get('slides', []):
-                    context = f"Current presentation has {len(st.session_state.slides)} slides.\n"
-                    context += f"Title: {st.session_state.get('presentation_title', 'Untitled')}\n"
-                    context += "Slides:\n"
-                    for i, slide in enumerate(st.session_state.slides[:3], 1):
-                        context += f"  {i}. {slide.get('title', 'Untitled')} ({slide.get('layout', 'content')})\n"
-                
-                # Create prompt with context
-                prompt = f"""
-                You are an AI presentation assistant. Help the user improve their presentation.
-                
-                {context}
-                
-                User request: {user_input}
-                
-                Provide helpful, actionable suggestions. If the user wants to modify slides,
-                explain what changes you recommend. Be concise and professional.
-                """
-                
-                # Get AI response
-                response = llm_handler.generate_response(
-                    prompt=prompt,
-                    model=model_name,
-                    max_tokens=1000
-                )
-                
-                # Add assistant response to history
-                st.session_state.chat_history.append({
-                    'role': 'assistant',
-                    'content': response or "Sorry, I couldn't generate a response."
-                })
-                
-                st.success("✅ Response received!")
+                ctx = ""
+                if st.session_state.get('slides'):
+                    ctx = f"Presentation: {st.session_state.get('presentation_title','')}\nSlides: {len(st.session_state.slides)}\n"
+                    for i,s in enumerate(st.session_state.slides[:3],1): ctx += f"  {i}. {s.get('title','')} ({s.get('layout','')})\n"
+                prompt = f"You are a presentation assistant.\n{ctx}\nUser: {ui}\nProvide helpful, concise suggestions."
+                resp = llm.generate_response(prompt=prompt, model=model, max_tokens=1000)
+                st.session_state.chat_history.append({'role':'assistant','content':resp or "Sorry, no response."})
+                st.success("✅ Done!")
                 st.rerun()
-                
             except Exception as e:
-                st.error(f"❌ Error: {str(e)}")
-                st.session_state.chat_history.append({
-                    'role': 'assistant',
-                    'content': f"Sorry, I encountered an error: {str(e)}"
-                })
+                st.error(f"❌ Error: {e}")
+                st.session_state.chat_history.append({'role':'assistant','content':f"Error: {e}"})
                 st.rerun()
     
-    # Clear chat history
-    if st.button("🗑️ Clear Chat History"):
+    if st.button("🗑️ Clear Chat"):
         st.session_state.chat_history = []
         st.rerun()
     
-    # Settings
-    with st.expander("⚙️ Chat Settings"):
-        st.selectbox(
-            "Model",
-            options=["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
-            index=0,
-            key="chat_model"
-        )
-        
-        st.slider(
-            "Temperature",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.7,
-            step=0.1,
-            help="Higher values = more creative, Lower values = more focused"
-        )
-        
-        st.slider(
-            "Max Tokens",
-            min_value=100,
-            max_value=4000,
-            value=1000,
-            step=100
-        )
+    with st.expander("⚙️ Settings"):
+        st.selectbox("Model", ["llama-3.3-70b-versatile","llama-3.1-8b-instant","mixtral-8x7b-32768"], index=0, key="chat_model")
+        st.slider("Temperature", 0.0, 1.0, 0.7, 0.1)
+        st.slider("Max Tokens", 100, 4000, 1000, 100)
