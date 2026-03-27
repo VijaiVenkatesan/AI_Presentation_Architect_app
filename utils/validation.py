@@ -19,36 +19,23 @@ class SlideValidator:
             slide_num = slide.get('slide_number', 'Unknown')
             layout = slide.get('layout', 'content')
             
-            # Check required fields
             for field in SlideValidator.REQUIRED_FIELDS:
                 if field not in slide:
                     errors.append(f"Slide {slide_num}: Missing required field '{field}'")
             
-            # Layout-specific validation
             content = slide.get('content', {})
             
-            if layout == 'chart':
-                if not content.get('chart'):
-                    warnings.append(f"Slide {slide_num}: Chart layout but missing chart data")
-                elif not content['chart'].get('data'):
-                    errors.append(f"Slide {slide_num}: Chart missing required 'data' field")
+            if layout == 'chart' and not content.get('chart'):
+                warnings.append(f"Slide {slide_num}: Chart layout but missing chart data")
             
-            elif layout == 'table':
-                table = content.get('table', {})
-                if not table.get('headers') or not table.get('data'):
-                    errors.append(f"Slide {slide_num}: Table missing 'headers' or 'data'")
+            if layout == 'table' and not content.get('table'):
+                warnings.append(f"Slide {slide_num}: Table layout but no table data")
             
-            elif layout == 'metrics':
-                if not content.get('key_metrics'):
-                    warnings.append(f"Slide {slide_num}: Metrics layout but no metrics data")
+            if layout == 'metrics' and not content.get('key_metrics'):
+                warnings.append(f"Slide {slide_num}: Metrics layout but no metrics data")
             
-            elif layout == 'image':
-                if not content.get('image'):
-                    warnings.append(f"Slide {slide_num}: Image layout but no image data")
-            
-            elif layout == 'two_column':
-                if not content.get('left_column') and not content.get('right_column'):
-                    warnings.append(f"Slide {slide_num}: Two-column layout but both columns empty")
+            if layout == 'image' and not content.get('image'):
+                warnings.append(f"Slide {slide_num}: Image layout but no image data")
         
         return {
             'valid': len(errors) == 0,
