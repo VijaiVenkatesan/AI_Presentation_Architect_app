@@ -7,5 +7,17 @@ from .search_handler import SearchHandler
 from .chart_generator import ChartGenerator
 from .validation import SlideValidator
 from .config import AppConfig
+from .file_handler import save_template_file, cleanup_old_templates
 
-__all__ = ['TemplateAnalyzer', 'EnhancedPPTGenerator', 'EnhancedPDFGenerator', 'LLMHandler', 'SearchHandler', 'ChartGenerator', 'SlideValidator', 'AppConfig']
+__all__ = [
+    'TemplateAnalyzer',
+    'EnhancedPPTGenerator',
+    'EnhancedPDFGenerator',
+    'LLMHandler',
+    'SearchHandler',
+    'ChartGenerator',
+    'SlideValidator',
+    'AppConfig',
+    'save_template_file',
+    'cleanup_old_templates'
+]
