@@ -1,164 +1,109 @@
 """
-AI Presentation Architect - Main Application
-Enterprise-level PowerPoint generator with AI content creation
+AI Presentation Architect - Main Application Entry Point
+Enhanced version with complete layout support, validation, and error handling
 """
-
 import streamlit as st
-import io
+import os
+import sys
+import logging
+import json
+import time
+from pathlib import Path
+from typing import Optional, Dict, List, Any
 from datetime import datetime
 
-# Import utilities
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
+
+# Import custom modules
+from components.sidebar import render_sidebar
+from components.editor import render_slide_editor
+from components.preview import display_all_slides_preview, render_slide_preview
+from components.chat_interface import render_chat_interface
 from utils.llm_handler import LLMHandler
 from utils.template_analyzer import TemplateAnalyzer
-from utils.ppt_generator import PresentationGenerator
-from utils.search_handler import SearchHandler
-from utils.preview_handler import PreviewHandler
-from utils.pdf_generator import PDFGenerator
+from utils.ppt_generator import EnhancedPPTGenerator
+from utils.pdf_generator import EnhancedPDFGenerator
+from utils.validation import SlideValidator
+from utils.config import AppConfig
 
-# Import components
-from components.sidebar import render_sidebar
-from components.editor import render_editor
-from components.preview import render_preview
-from components.chat_interface import render_chat_interface
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('app.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
-
-# Page configuration
+# Page configuration - MUST be first Streamlit command
 st.set_page_config(
-    page_title="AI Presentation Architect",
-    page_icon="🎯",
+    page_title="🎨 AI Presentation Architect",
+    page_icon="🎨",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS for better UI
 st.markdown("""
 <style>
-    /* Main container */
-    .main .block-container {
-        padding-top: 1rem;
-        padding-bottom: 2rem;
-        max-width: 1400px;
+    .main-header {
+        font-size: 2.5rem;
+        color: #4F81BD;
+        font-weight: bold;
+        margin-bottom: 1rem;
     }
-    
-    /* Headers */
-    h1, h2, h3 {
-        color: #F8FAFC !important;
+    .status-badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 1rem;
+        font-size: 0.875rem;
+        font-weight: 500;
     }
-    
-    /* Cards */
-    .info-card {
-        background: linear-gradient(135deg, #1E293B 0%, #334155 100%);
-        border-radius: 12px;
-        padding: 1.5rem;
-        border: 1px solid #475569;
+    .status-ready { background: #d4edda; color: #155724; }
+    .status-processing { background: #fff3cd; color: #856404; }
+    .status-error { background: #f8d7da; color: #721c24; }
+    .slide-card {
+        background: white;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 1rem;
         margin: 0.5rem 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
-    
-    /* Template Info Card */
-    .template-card {
-        background: linear-gradient(135deg, #065F46 0%, #047857 100%);
-        border-radius: 12px;
-        padding: 1rem 1.5rem;
-        border: 1px solid #10B981;
+    .export-section {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 1rem;
         margin: 1rem 0;
     }
-    
-    /* Color swatch */
-    .color-swatch {
-        display: inline-block;
-        width: 24px;
-        height: 24px;
-        border-radius: 4px;
-        border: 2px solid #fff;
-        margin-right: 8px;
-        vertical-align: middle;
-    }
-    
-    /* Buttons */
-    .stButton > button {
-        background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
-        color: white;
-        border: none;
-        border-radius: 8px;
-        padding: 0.5rem 1rem;
-        font-weight: 600;
-        transition: all 0.3s ease;
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
-    }
-    
-    /* Danger button */
-    .danger-btn button {
-        background: linear-gradient(135deg, #DC2626 0%, #EF4444 100%) !important;
-    }
-    
-    /* Success button */
-    .success-btn button {
-        background: linear-gradient(135deg, #059669 0%, #10B981 100%) !important;
-    }
-    
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background: #1E293B;
-        padding: 0.5rem;
-        border-radius: 12px;
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        background: transparent;
-        color: #94A3B8;
-        border-radius: 8px;
-        padding: 0.5rem 1rem;
-    }
-    
-    .stTabs [aria-selected="true"] {
-        background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
-        color: white;
-    }
-    
-    /* Metrics */
-    [data-testid="stMetricValue"] {
-        font-size: 1.5rem !important;
-    }
-    
-    /* Expander */
-    .streamlit-expanderHeader {
-        background: #1E293B;
-        border-radius: 8px;
-    }
-    
-    /* Layout row */
-    .layout-row {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
+    st-expander {
         margin: 0.5rem 0;
-    }
-    
-    .layout-badge {
-        background: #334155;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 0.85rem;
-        color: #E2E8F0;
     }
 </style>
 """, unsafe_allow_html=True)
 
 
 def initialize_session_state():
-    """Initialize session state variables"""
+    """Initialize all session state variables"""
     defaults = {
-        'content': None,
-        'template_data': None,
-        'template_file_name': None,
-        'generated': False,
-        'chat_history': [],
-        'current_slide': 0
+        'slides': [],
+        'presentation_title': '',
+        'presentation_topic': '',
+        'template_file': None,
+        'template_analyzed': False,
+        'current_slide_index': 0,
+        'generation_in_progress': False,
+        'export_format': None,
+        'api_configured': False,
+        'llm_handler': None,
+        'config': None,
+        'validation_result': None,
+        'error_messages': [],
+        'success_messages': [],
+        'last_saved': None,
     }
     
     for key, value in defaults.items():
@@ -166,398 +111,478 @@ def initialize_session_state():
             st.session_state[key] = value
 
 
-def clear_all_data():
-    """Clear all session data"""
-    st.session_state.content = None
-    st.session_state.template_data = None
-    st.session_state.template_file_name = None
-    st.session_state.generated = False
-    st.session_state.chat_history = []
-    st.session_state.current_slide = 0
+def load_configuration():
+    """Load application configuration"""
+    try:
+        config = AppConfig.from_file()
+        st.session_state.config = config
+        
+        # Initialize LLM handler
+        if config.groq_api_key:
+            st.session_state.llm_handler = LLMHandler(api_key=config.groq_api_key)
+            st.session_state.api_configured = True
+            logger.info("LLM handler initialized successfully")
+        else:
+            st.session_state.llm_handler = LLMHandler()
+            st.session_state.api_configured = False
+            logger.warning("GROQ_API_KEY not configured - AI features disabled")
+        
+        return True
+    except Exception as e:
+        logger.error(f"Failed to load configuration: {e}", exc_info=True)
+        st.error(f"⚠️ Configuration error: {str(e)}")
+        return False
 
 
-def clear_generated_content():
-    """Clear only generated content, keep template"""
-    st.session_state.content = None
-    st.session_state.generated = False
-    st.session_state.current_slide = 0
+def auto_save_presentation():
+    """Auto-save presentation state to prevent data loss"""
+    try:
+        save_data = {
+            'title': st.session_state.presentation_title,
+            'topic': st.session_state.presentation_topic,
+            'slides': st.session_state.slides,
+            'timestamp': datetime.now().isoformat(),
+            'version': '2.0'
+        }
+        
+        # Save to session (temporary) and optionally to file
+        st.session_state.last_saved = datetime.now()
+        
+        # Optional: Save to local file for recovery
+        cache_dir = Path('.cache')
+        cache_dir.mkdir(exist_ok=True)
+        save_path = cache_dir / 'autosave.json'
+        
+        with open(save_path, 'w') as f:
+            json.dump(save_data, f, indent=2)
+        
+        logger.debug(f"Auto-saved presentation to {save_path}")
+        
+    except Exception as e:
+        logger.warning(f"Auto-save failed: {e}")
 
 
-def main():
-    """Main application"""
+def load_autosave():
+    """Load auto-saved presentation if available"""
+    cache_path = Path('.cache/autosave.json')
     
-    initialize_session_state()
+    if cache_path.exists():
+        try:
+            with open(cache_path) as f:
+                data = json.load(f)
+            
+            # Only auto-load if recent (within 24 hours)
+            saved_time = datetime.fromisoformat(data.get('timestamp', ''))
+            if (datetime.now() - saved_time).total_seconds() < 86400:
+                st.session_state.presentation_title = data.get('title', '')
+                st.session_state.presentation_topic = data.get('topic', '')
+                st.session_state.slides = data.get('slides', [])
+                st.session_state.last_saved = saved_time
+                
+                logger.info(f"Loaded auto-saved presentation from {saved_time}")
+                return True
+        except Exception as e:
+            logger.warning(f"Failed to load autosave: {e}")
     
-    # Initialize handlers
-    llm_handler = LLMHandler()
-    template_analyzer = TemplateAnalyzer()
-    search_handler = SearchHandler()
+    return False
+
+
+def generate_presentation_content(prompt: str, num_slides: int, template_data: Optional[Dict] = None) -> bool:
+    """
+    Generate presentation content using LLM
     
-    # Render sidebar and get configuration
-    config = render_sidebar(llm_handler)
+    Args:
+        prompt: User's presentation topic/prompt
+        num_slides: Number of slides to generate
+        template_data: Optional template analysis data
     
-    # Main content area - Header
-    col1, col2, col3 = st.columns([6, 2, 2])
+    Returns:
+        bool: Success status
+    """
+    if not st.session_state.api_configured:
+        st.error("❌ API not configured. Please set GROQ_API_KEY in secrets or environment.")
+        return False
     
-    with col1:
-        st.markdown("""
-        <h1 style="
-            background: linear-gradient(135deg, #6366F1 0%, #EC4899 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            font-size: 2rem;
-            font-weight: 800;
-            margin: 0;
-        ">🎯 AI Presentation Architect</h1>
-        """, unsafe_allow_html=True)
+    try:
+        llm = st.session_state.llm_handler
+        
+        # Show progress
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        status_text.info("🔄 Analyzing prompt and planning structure...")
+        progress_bar.progress(20)
+        
+        # Generate slide outline first
+        outline_prompt = f"""
+        Create a presentation outline for: {prompt}
+        
+        Requirements:
+        - Exactly {num_slides} slides
+        - Include diverse layouts: title, content, two_column, chart, table, quote, metrics, image, timeline, conclusion
+        - Each slide should have: title, layout type, content structure
+        - Return valid JSON array only
+        
+        Example format:
+        [
+            {{"slide_number": 1, "layout": "title", "title": "Main Title", "content": {{"subtitle": "..."}}}},
+            {{"slide_number": 2, "layout": "content", "title": "Intro", "content": {{"main_text": "...", "bullet_points": ["..."]}}}}
+        ]
+        """
+        
+        outline_response = llm.generate_structured_response(
+            prompt=outline_prompt,
+            response_format={"type": "json_object"}
+        )
+        
+        if not outline_response:
+            raise ValueError("Failed to generate slide outline")
+        
+        progress_bar.progress(40)
+        status_text.info("🔄 Generating detailed slide content...")
+        
+        # Generate detailed content for each slide
+        generated_slides = []
+        
+        for i, slide_outline in enumerate(outline_response.get('slides', [])):
+            status_text.info(f"🔄 Generating slide {i+1}/{num_slides}: {slide_outline.get('title', 'Untitled')}")
+            
+            detail_prompt = f"""
+            Expand this slide with rich, professional content:
+            
+            Slide {slide_outline.get('slide_number')}: {slide_outline.get('title')}
+            Layout: {slide_outline.get('layout')}
+            Topic: {prompt}
+            
+            Generate appropriate content based on layout type:
+            - chart: Include chart title, description, and data points
+            - table: Include headers and row data
+            - metrics: Include key_value pairs with labels
+            - image: Include image description or placeholder
+            - quote: Include quote text and author
+            - two_column: Include left_column and right_column content
+            - timeline: Include timeline_items with date and description
+            
+            Return valid JSON with: title, layout, content (with layout-specific fields), speaker_notes
+            """
+            
+            slide_content = llm.generate_structured_response(
+                prompt=detail_prompt,
+                response_format={"type": "json_object"}
+            )
+            
+            if slide_content:
+                generated_slides.append(slide_content)
+            
+            progress_bar.progress(40 + (i + 1) * 60 // num_slides)
+            time.sleep(0.3)  # Rate limiting
+        
+        progress_bar.progress(90)
+        status_text.info("🔄 Validating and formatting slides...")
+        
+        # Validate generated slides
+        validation = SlideValidator.validate_slides(generated_slides)
+        st.session_state.validation_result = validation
+        
+        if validation['errors']:
+            logger.warning(f"Validation errors: {validation['errors']}")
+            for error in validation['errors']:
+                st.warning(f"⚠️ {error}")
+        
+        # Update session state
+        st.session_state.slides = generated_slides
+        st.session_state.presentation_title = st.session_state.presentation_title or prompt[:50]
+        
+        progress_bar.progress(100)
+        status_text.success("✅ Presentation generated successfully!")
+        
+        # Auto-save after generation
+        auto_save_presentation()
+        
+        time.sleep(1)
+        progress_bar.empty()
+        status_text.empty()
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Generation failed: {e}", exc_info=True)
+        st.error(f"❌ Generation error: {str(e)}")
+        return False
+
+
+def export_presentation(format_type: str) -> Optional[bytes]:
+    """
+    Export presentation to PPTX or PDF
     
-    with col2:
-        if st.button("🔄 Clear Content", use_container_width=True):
-            clear_generated_content()
-            st.rerun()
+    Args:
+        format_type: 'pptx' or 'pdf'
     
-    with col3:
-        if st.button("🗑️ Reset All", use_container_width=True, type="secondary"):
-            clear_all_data()
-            st.rerun()
+    Returns:
+        Bytes object with file content or None
+    """
+    if not st.session_state.slides:
+        st.error("❌ No slides to export. Generate content first.")
+        return None
     
-    st.markdown("<p style='color: #94A3B8; margin-top: -10px;'>Create stunning enterprise presentations with AI</p>", unsafe_allow_html=True)
+    try:
+        # Validate before export
+        validation = SlideValidator.validate_slides(st.session_state.slides)
+        
+        if validation['errors']:
+            st.error("❌ Cannot export - validation errors found:")
+            for error in validation['errors']:
+                st.error(f"  • {error}")
+            return None
+        
+        if validation['warnings']:
+            st.warning(f"⚠️ {len(validation['warnings'])} warnings - export may have issues:")
+            for warning in validation['warnings'][:3]:
+                st.warning(f"  • {warning}")
+        
+        status_text = st.empty()
+        progress_bar = st.progress(0)
+        
+        if format_type == 'pptx':
+            status_text.info("📊 Generating PowerPoint presentation...")
+            generator = EnhancedPPTGenerator()
+            progress_bar.progress(50)
+            
+            output = generator.generate(st.session_state.slides)
+            
+            progress_bar.progress(100)
+            status_text.success("✅ PowerPoint file ready!")
+            
+            return output
+            
+        elif format_type == 'pdf':
+            status_text.info("📄 Generating PDF document...")
+            generator = EnhancedPDFGenerator()
+            progress_bar.progress(50)
+            
+            output = generator.generate(st.session_state.slides)
+            
+            progress_bar.progress(100)
+            status_text.success("✅ PDF file ready!")
+            
+            return output
+        
+    except Exception as e:
+        logger.error(f"Export failed ({format_type}): {e}", exc_info=True)
+        st.error(f"❌ Export error: {str(e)}")
+        return None
+    finally:
+        time.sleep(0.5)
+        if 'progress_bar' in locals():
+            progress_bar.empty()
+        if 'status_text' in locals():
+            status_text.empty()
+
+
+def display_generation_stats():
+    """Display presentation statistics"""
+    slides = st.session_state.slides
     
-    # Status indicators row
+    if not slides:
+        return
+    
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        if llm_handler.is_configured():
-            st.success("✓ AI Connected")
-        else:
-            st.warning("⚠ Add API Key")
+        st.metric("📊 Total Slides", len(slides))
     
     with col2:
-        if st.session_state.template_data and st.session_state.template_data.get('use_template_file'):
-            st.success(f"✓ Template: {st.session_state.template_file_name or 'Loaded'}")
-        else:
-            st.info("○ No Template")
+        layouts = {s.get('layout', 'content') for s in slides}
+        st.metric("🎨 Layout Types", len(layouts))
     
     with col3:
-        if st.session_state.content:
-            slide_count = len(st.session_state.content.get('slides', []))
-            st.success(f"✓ {slide_count} Slides Ready")
-        else:
-            st.info(f"○ {config.get('num_slides', 10)} Slides (Target)")
+        has_charts = sum(1 for s in slides if s.get('layout') == 'chart')
+        st.metric("📈 Charts", has_charts)
     
     with col4:
-        if config.get('selected_model'):
-            model_name = config['selected_model'].split('-')[0].title()
-            st.info(f"🤖 {model_name}")
+        has_tables = sum(1 for s in slides if s.get('layout') == 'table')
+        st.metric("📋 Tables", has_tables)
     
-    st.divider()
-    
-    # ============================================
-    # TEMPLATE UPLOAD AND ANALYSIS
-    # ============================================
-    
-    if config.get('template_file'):
-        file_name = config['template_file'].name
+    # Layout distribution
+    with st.expander("📐 Layout Distribution", expanded=False):
+        layout_counts = {}
+        for slide in slides:
+            layout = slide.get('layout', 'content')
+            layout_counts[layout] = layout_counts.get(layout, 0) + 1
         
-        # Check if this is a new template
-        if st.session_state.template_file_name != file_name:
-            with st.spinner("📊 Analyzing template..."):
-                config['template_file'].seek(0)
-                file_bytes = io.BytesIO(config['template_file'].read())
-                config['template_file'].seek(0)
-                
-                if file_name.endswith('.pptx'):
-                    st.session_state.template_data = template_analyzer.analyze_pptx(file_bytes)
-                else:
-                    st.session_state.template_data = template_analyzer.analyze_image(file_bytes)
-                
-                st.session_state.template_file_name = file_name
+        col_a, col_b = st.columns([2, 1])
+        with col_a:
+            for layout, count in sorted(layout_counts.items()):
+                st.write(f"• **{layout}**: {count} slide{'s' if count > 1 else ''}")
+        with col_b:
+            if layout_counts:
+                st.bar_chart(layout_counts)
+
+
+def main():
+    """Main application entry point"""
     
-    # Show Template Information Card
-    if st.session_state.template_data and st.session_state.template_data.get('use_template_file'):
-        td = st.session_state.template_data
-        
-        st.markdown("""
-        <div class="template-card">
-            <h4 style="margin:0; color: white;">✓ Template Loaded Successfully</h4>
-            <p style="margin:5px 0 0 0; color: #A7F3D0; font-size: 0.9rem;">
-                Your generated presentation will use this template's exact styling
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        with st.expander("📋 Template Details", expanded=False):
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.markdown("**📐 Dimensions**")
-                st.markdown(f"Width: `{td['slide_size']['width']:.2f}\"`")
-                st.markdown(f"Height: `{td['slide_size']['height']:.2f}\"`")
-                
-                st.markdown("**🖼️ Logo**")
-                if td.get('has_logo'):
-                    st.markdown("✓ Logo detected")
-                    pos = td.get('logo_position', {})
-                    st.markdown(f"Position: ({pos.get('left', 0):.1f}\", {pos.get('top', 0):.1f}\")")
-                else:
-                    st.markdown("No logo detected")
-            
-            with col2:
-                st.markdown("**🎨 Detected Colors**")
-                colors_data = td.get('colors', {})
-                
-                for color_name, color_value in colors_data.items():
-                    st.markdown(
-                        f'<div style="display:flex; align-items:center; margin:4px 0;">'
-                        f'<span class="color-swatch" style="background:{color_value};"></span>'
-                        f'<span>{color_name}: {color_value}</span></div>',
-                        unsafe_allow_html=True
-                    )
-            
-            with col3:
-                st.markdown("**📝 Detected Fonts**")
-                fonts_data = td.get('fonts', {})
-                
-                for font_type, font_info in fonts_data.items():
-                    font_name = font_info.get('name', 'Arial')
-                    font_size = font_info.get('size', 18)
-                    st.markdown(f"**{font_type.title()}**: {font_name} ({font_size}pt)")
-                
-                st.markdown("**📑 Available Layouts**")
-                layouts = td.get('slide_layouts_info', [])
-                if layouts:
-                    layout_names = [l.get('name', 'Unknown') for l in layouts[:5]]
-                    for name in layout_names:
-                        st.markdown(f"• {name}")
-                    if len(layouts) > 5:
-                        st.markdown(f"*+ {len(layouts) - 5} more...*")
+    # Initialize
+    initialize_session_state()
     
-    # ============================================
-    # MAIN TABS
-    # ============================================
+    # Load configuration
+    if not load_configuration():
+        st.stop()
     
-    tab1, tab2, tab3, tab4 = st.tabs(["💬 Generate", "✏️ Edit", "👁️ Preview", "💾 Export"])
+    # Try to load autosave
+    if not st.session_state.slides:
+        load_autosave()
     
-    # ============================================
-    # TAB 1: GENERATE
-    # ============================================
+    # Render sidebar
+    render_sidebar()
+    
+    # Main content area
+    st.markdown('<h1 class="main-header">🎨 AI Presentation Architect</h1>', unsafe_allow_html=True)
+    
+    # Status indicator
+    status_class = "status-ready" if st.session_state.slides else "status-processing"
+    status_text = "✓ Ready" if st.session_state.slides else "⏳ Start creating"
+    
+    st.markdown(f"""
+    <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem;">
+        <span class="status-badge {status_class}">{status_text}</span>
+        {f'<span style="color: #666; font-size: 0.9rem;">Last saved: {st.session_state.last_saved.strftime("%H:%M") if st.session_state.last_saved else "Never"}</span>' if st.session_state.last_saved else ''}
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Tabbed interface
+    tab1, tab2, tab3, tab4 = st.tabs(["✏️ Editor", "👁️ Preview", "💬 AI Assistant", "📥 Export"])
+    
     with tab1:
-        st.markdown("### Create Your Presentation")
+        st.subheader("📝 Slide Editor")
         
-        # Chat interface
-        user_prompt = render_chat_interface(
-            llm_handler,
-            config.get('selected_model', 'llama-3.3-70b-versatile')
-        )
-        
-        if user_prompt:
-            with st.spinner("🚀 Generating presentation content..."):
-                # Fetch real-time data if enabled
-                real_time_data = None
-                if config.get('include_real_time_data'):
-                    with st.status("Searching for real-time data...") as status:
-                        real_time_data = search_handler.compile_research_data(user_prompt)
-                        status.update(label="✓ Data compiled", state="complete")
-                
-                # Get template context
-                template_context = st.session_state.template_data or template_analyzer._get_default_template()
-                
-                # Generate content
-                content = llm_handler.generate_presentation_content(
-                    prompt=user_prompt,
-                    model=config.get('selected_model', 'llama-3.3-70b-versatile'),
-                    num_slides=config.get('num_slides', 10),
-                    template_context=template_context,
-                    real_time_data=real_time_data,
-                    layout_preferences=config.get('layout_preferences', {})
-                )
-                
-                st.session_state.content = content
-                st.session_state.generated = True
-                
-                # Add to chat history
-                slide_count = len(content.get('slides', []))
-                st.session_state.chat_history.append({
-                    'role': 'assistant',
-                    'content': f"✓ Created presentation '{content.get('title', 'Untitled')}' with {slide_count} slides."
-                })
-            
-            st.success(f"✓ Generated {len(content.get('slides', []))} slides!")
-            st.rerun()
-        
-        # Show current content summary
-        if st.session_state.content:
-            content = st.session_state.content
+        if not st.session_state.slides:
+            st.info("👈 Use the sidebar to configure your presentation and click 'Generate' to create slides")
+        else:
+            # Display generation stats
+            display_generation_stats()
             
             st.divider()
-            st.markdown("### 📋 Generated Presentation")
             
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Title", content.get('title', 'Untitled')[:25] + "...")
-            with col2:
-                st.metric("Slides", len(content.get('slides', [])))
-            with col3:
-                st.metric("Template", "Custom" if st.session_state.template_data and st.session_state.template_data.get('use_template_file') else "Default")
-            with col4:
-                st.metric("Status", "✓ Ready")
+            # Slide editor
+            render_slide_editor()
             
-            # Slide overview
-            with st.expander("📊 Slide Overview", expanded=False):
-                layout_emojis = {
-                    'title': '🎯', 'content': '📝', 'two_column': '📊',
-                    'chart': '📈', 'table': '📋', 'quote': '💬',
-                    'timeline': '⏰', 'comparison': '⚖️', 'conclusion': '🎬',
-                    'metrics': '📊', 'image': '🖼️'
-                }
-                
-                for slide in content.get('slides', []):
-                    layout = slide.get('layout', 'content')
-                    emoji = layout_emojis.get(layout, '📄')
-                    title = slide.get('title', 'Untitled')
-                    st.markdown(f"{emoji} **Slide {slide.get('slide_number', '?')}** ({layout}): {title}")
+            # Auto-save indicator
+            if st.session_state.last_saved:
+                st.caption(f"💾 Auto-saved at {st.session_state.last_saved.strftime('%H:%M:%S')}")
     
-    # ============================================
-    # TAB 2: EDIT
-    # ============================================
     with tab2:
-        if st.session_state.content:
-            st.session_state.content = render_editor(st.session_state.content)
-        else:
-            st.info("💡 Generate content first to edit slides")
-            st.markdown("""
-            **How to get started:**
-            1. Upload a template (optional but recommended)
-            2. Go to the **Generate** tab
-            3. Describe your presentation topic
-            4. Click **Generate**
-            5. Come back here to edit
-            """)
-    
-    # ============================================
-    # TAB 3: PREVIEW
-    # ============================================
-    with tab3:
-        if st.session_state.content:
-            # Get template data for preview colors
-            template_data = st.session_state.template_data or None
-            render_preview(st.session_state.content, template_data)
-        else:
-            st.info("💡 Generate content first to see preview")
-    
-    # ============================================
-    # TAB 4: EXPORT
-    # ============================================
-    with tab4:
-        st.markdown("### 💾 Export Your Presentation")
+        st.subheader("👁️ Live Preview")
         
-        if st.session_state.content:
-            content = st.session_state.content
+        if not st.session_state.slides:
+            st.info("Generate slides first to see preview")
+        else:
+            # Preview controls
+            col1, col2 = st.columns([3, 1])
+            with col2:
+                if st.button("🔄 Refresh Preview", use_container_width=True):
+                    st.rerun()
             
+            with col1:
+                st.caption(f"Previewing {len(st.session_state.slides)} slide{'s' if len(st.session_state.slides) > 1 else ''}")
+            
+            st.divider()
+            
+            # Display all slides preview
+            display_all_slides_preview(st.session_state.slides)
+    
+    with tab3:
+        st.subheader("💬 AI Chat Assistant")
+        
+        if not st.session_state.api_configured:
+            st.warning("⚠️ Configure GROQ_API_KEY to enable AI chat features")
+        else:
+            render_chat_interface()
+    
+    with tab4:
+        st.subheader("📥 Export Presentation")
+        
+        if not st.session_state.slides:
+            st.info("Generate slides first to enable export")
+        else:
+            st.markdown('<div class="export-section">', unsafe_allow_html=True)
+            
+            # Validation summary
+            if st.session_state.validation_result:
+                val = st.session_state.validation_result
+                if val['valid']:
+                    st.success("✅ All slides passed validation")
+                else:
+                    st.error(f"❌ {len(val['errors'])} error(s) found - fix before exporting")
+                if val['warnings']:
+                    st.warning(f"⚠️ {len(val['warnings'])} warning(s) - review recommended")
+            
+            st.divider()
+            
+            # Export options
             col1, col2 = st.columns(2)
             
-            # PPTX Export
             with col1:
-                st.markdown("""
-                <div class="info-card">
-                    <h4 style="margin:0; color: #F8FAFC;">📊 PowerPoint Export</h4>
-                    <p style="color: #94A3B8; margin: 8px 0;">Download as .pptx file with template styling</p>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown("### 📊 PowerPoint (.pptx)")
+                st.caption("Editable format with full layout support")
                 
-                if st.button("📥 Generate PowerPoint", use_container_width=True, type="primary"):
-                    with st.spinner("Creating PowerPoint..."):
-                        try:
-                            template_data = st.session_state.template_data or {}
-                            
-                            generator = PresentationGenerator(template_data)
-                            pptx_file = generator.generate_presentation(content)
-                            
-                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            filename = f"presentation_{timestamp}.pptx"
-                            
-                            st.download_button(
-                                label="⬇️ Download PPTX",
-                                data=pptx_file,
-                                file_name=filename,
-                                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                                use_container_width=True
-                            )
-                            
-                            st.success("✓ PowerPoint generated!")
-                        except Exception as e:
-                            st.error(f"Error generating PPTX: {e}")
-            
-            # PDF Export
-            with col2:
-                st.markdown("""
-                <div class="info-card">
-                    <h4 style="margin:0; color: #F8FAFC;">📄 PDF Export</h4>
-                    <p style="color: #94A3B8; margin: 8px 0;">Download as PDF document</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                if st.button("📥 Generate PDF", use_container_width=True):
-                    with st.spinner("Creating PDF..."):
-                        try:
-                            template_data = st.session_state.template_data or {}
-                            
-                            pdf_generator = PDFGenerator(template_data)
-                            pdf_file = pdf_generator.generate_pdf(content)
-                            
-                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            filename = f"presentation_{timestamp}.pdf"
-                            
-                            st.download_button(
-                                label="⬇️ Download PDF",
-                                data=pdf_file,
-                                file_name=filename,
-                                mime="application/pdf",
-                                use_container_width=True
-                            )
-                            
-                            st.success("✓ PDF generated!")
-                        except Exception as e:
-                            st.error(f"Error generating PDF: {e}")
-            
-            st.divider()
-            
-            # Export Summary
-            st.markdown("### 📊 Export Summary")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric("Total Slides", len(content.get('slides', [])))
+                if st.button("📥 Export as PPTX", use_container_width=True, type="primary"):
+                    pptx_data = export_presentation('pptx')
+                    if pptx_data:
+                        st.download_button(
+                            label="⬇️ Download PowerPoint File",
+                            data=pptx_data,
+                            file_name=f"{st.session_state.presentation_title or 'presentation'}.pptx",
+                            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                            use_container_width=True
+                        )
             
             with col2:
-                charts = sum(1 for s in content.get('slides', []) if s.get('layout') == 'chart')
-                st.metric("Charts", charts)
+                st.markdown("### 📄 PDF Document (.pdf)")
+                st.caption("Print-ready format with consistent formatting")
+                
+                if st.button("📥 Export as PDF", use_container_width=True, type="primary"):
+                    pdf_data = export_presentation('pdf')
+                    if pdf_data:
+                        st.download_button(
+                            label="⬇️ Download PDF File",
+                            data=pdf_data,
+                            file_name=f"{st.session_state.presentation_title or 'presentation'}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
             
-            with col3:
-                tables = sum(1 for s in content.get('slides', []) if s.get('layout') == 'table')
-                st.metric("Tables", tables)
+            st.markdown('</div>', unsafe_allow_html=True)
             
-            with col4:
-                has_template = st.session_state.template_data and st.session_state.template_data.get('use_template_file')
-                st.metric("Template", "Custom ✓" if has_template else "Default")
-            
-            # Template Info in Export
-            if st.session_state.template_data and st.session_state.template_data.get('use_template_file'):
-                st.info("✓ Your exported presentation will use the uploaded template's styling, layouts, colors, and fonts.")
-        
-        else:
-            st.info("💡 Generate content first to export")
-            
-            st.markdown("""
-            ### How to Export:
-            1. **Upload a template** (optional) in the sidebar
-            2. Go to the **Generate** tab
-            3. Enter your presentation topic
-            4. Click **Generate**
-            5. Return here to download as **PPTX** or **PDF**
-            """)
+            # Export tips
+            with st.expander("💡 Export Tips"):
+                st.markdown("""
+                - **PPTX**: Best for further editing in PowerPoint or Google Slides
+                - **PDF**: Best for sharing, printing, or presentations where editing isn't needed
+                - Charts and tables are rendered as native PowerPoint/PDF elements
+                - Images are embedded at high resolution
+                - Speaker notes are included in PPTX (view in Notes pane)
+                """)
+    
+    # Footer
+    st.divider()
+    st.caption(
+        "🎨 AI Presentation Architect v2.0 • "
+        f"Slides: {len(st.session_state.slides)} • "
+        f"API: {'✅ Connected' if st.session_state.api_configured else '❌ Not configured'}"
+    )
+    
+    # Periodic auto-save (every 2 minutes when active)
+    if st.session_state.slides and st.session_state.last_saved:
+        elapsed = (datetime.now() - st.session_state.last_saved).total_seconds()
+        if elapsed > 120:
+            auto_save_presentation()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        logger.critical(f"Application crashed: {e}", exc_info=True)
+        st.error("💥 Application error occurred. Please check logs or refresh the page.")
+        st.exception(e)
