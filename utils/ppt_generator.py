@@ -1,7 +1,10 @@
-"""Enhanced PowerPoint Generator - ALL BUGS FIXED"""
+"""Enhanced PowerPoint Generator - All bugs fixed"""
 from typing import Dict, List, Any, Optional
 from pathlib import Path
-import io, base64, logging, re
+import io
+import base64
+import logging
+import re
 from pptx import Presentation
 from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
@@ -10,13 +13,23 @@ from pptx.enum.shapes import MSO_SHAPE
 
 logger = logging.getLogger(__name__)
 
+
 class EnhancedPPTGenerator:
     LAYOUT_MAP = {
-        'title': 0, 'content': 1, 'two_column': 1, 'chart': 1, 'table': 1,
-        'quote': 1, 'metrics': 1, 'timeline': 1, 'comparison': 1, 'conclusion': 1, 'image': 1
+        'title': 0,
+        'content': 1,
+        'two_column': 1,
+        'chart': 1,
+        'table': 1,
+        'quote': 1,
+        'metrics': 1,
+        'timeline': 1,
+        'comparison': 1,
+        'conclusion': 1,
+        'image': 1
     }
     
-    def __init__(self, template_path: Optional[str] = None):
+    def __init__(self, template_path=None):
         if template_path and Path(template_path).exists():
             self.prs = Presentation(template_path)
         else:
@@ -24,8 +37,8 @@ class EnhancedPPTGenerator:
         self.slide_width = self.prs.slide_width
         self.slide_height = self.prs.slide_height
     
-    def generate(self, slides_ List[Dict[str, Any]]) -> io.BytesIO:
-        for slide_data in slides_
+    def generate(self, slides_data):
+        for slide_data in slides_data:
             try:
                 self._create_slide(slide_data)
             except Exception as e:
@@ -40,7 +53,7 @@ class EnhancedPPTGenerator:
         output.seek(0)
         return output
     
-    def _create_slide(self, slide_ Dict[str, Any]):
+    def _create_slide(self, slide_data):
         layout_type = slide_data.get('layout', 'content')
         layout_idx = self.LAYOUT_MAP.get(layout_type, 1)
         if layout_idx >= len(self.prs.slide_layouts):
@@ -51,14 +64,14 @@ class EnhancedPPTGenerator:
         handler = getattr(self, f'_handle_{layout_type}_layout', self._handle_content_layout)
         handler(slide, slide_data)
     
-    def _handle_title_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_title_layout(self, slide, slide_data):
         content = slide_data.get('content', {})
         if slide.shapes.title:
             slide.shapes.title.text = slide_data.get('title', '')
         if len(slide.placeholders) > 1:
             slide.placeholders[1].text = slide_data.get('subtitle', content.get('subtitle', ''))
     
-    def _handle_content_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_content_layout(self, slide, slide_data):
         content = slide_data.get('content', {})
         if len(slide.shapes) > 1 and slide.shapes[1].has_text_frame:
             tf = slide.shapes[1].text_frame
@@ -79,7 +92,7 @@ class EnhancedPPTGenerator:
                     notes = "\n".join([str(n) for n in notes])
                 slide.notes_slide.notes_text_frame.text = str(notes)
     
-    def _handle_two_column_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_two_column_layout(self, slide, slide_data):
         content = slide_data.get('content', {})
         if len(slide.shapes) > 1:
             slide.shapes._spTree.remove(slide.shapes[1]._element)
@@ -101,7 +114,7 @@ class EnhancedPPTGenerator:
         add_col(margin, content.get('left_column', []) or [])
         add_col(margin + col_w + Inches(0.3), content.get('right_column', []) or [])
     
-    def _handle_chart_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_chart_layout(self, slide, slide_data):
         content = slide_data.get('content', {})
         chart = content.get('chart', {})
         if not chart:
@@ -114,7 +127,7 @@ class EnhancedPPTGenerator:
         shape.fill.solid()
         shape.fill.fore_color.rgb = RGBColor(240, 240, 240)
         tf = shape.text_frame
-        tf.text = f"📊 {chart.get('title', 'Chart')}"
+        tf.text = f"Chart: {chart.get('title', 'Chart')}"
         tf.paragraphs[0].font.size = Pt(16)
         tf.paragraphs[0].font.bold = True
         if chart.get('description'):
@@ -125,10 +138,9 @@ class EnhancedPPTGenerator:
             tf2.paragraphs[0].text = "Data:"
             tf2.paragraphs[0].font.bold = True
             for k, v in chart['data'].items():
-                tf2.add_paragraph().text = f"  • {k}: {v}"
+                tf2.add_paragraph().text = f"  - {k}: {v}"
     
-    def _handle_table_layout(self, slide, slide_ Dict[str, Any]):
-        """FIXED: Convert float to Emu (integer) for table column width"""
+    def _handle_table_layout(self, slide, slide_data):
         content = slide_data.get('content', {})
         table = content.get('table', {})
         if not table or not isinstance(table, dict):
@@ -146,7 +158,6 @@ class EnhancedPPTGenerator:
         tw = self.slide_width * 0.9
         th = self.slide_height * 0.6
         ppt_table = slide.shapes.add_table(rows, cols, (self.slide_width-tw)/2, Inches(1.8), tw, th).table
-        # FIXED: Convert to Emu (integer) for column width
         col_width = int(tw / cols)
         for i in range(cols):
             ppt_table.columns[i].width = col_width
@@ -164,7 +175,7 @@ class EnhancedPPTGenerator:
                     c.text = str(val) if val is not None else ""
                     c.text_frame.paragraphs[0].font.size = Pt(10)
     
-    def _handle_quote_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_quote_layout(self, slide, slide_data):
         content = slide_data.get('content', {})
         if len(slide.shapes) > 1:
             slide.shapes._spTree.remove(slide.shapes[1]._element)
@@ -184,7 +195,7 @@ class EnhancedPPTGenerator:
             pa.font.size = Pt(14)
             pa.alignment = PP_ALIGN.RIGHT
     
-    def _handle_metrics_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_metrics_layout(self, slide, slide_data):
         content = slide_data.get('content', {})
         metrics = content.get('key_metrics', [])
         if not metrics:
@@ -212,8 +223,7 @@ class EnhancedPPTGenerator:
             pl.font.size = Pt(14)
             pl.alignment = PP_ALIGN.CENTER
     
-    def _handle_timeline_layout(self, slide, slide_ Dict[str, Any]):
-        """FIXED: Use RECTANGLE instead of LINE (which doesn't exist)"""
+    def _handle_timeline_layout(self, slide, slide_data):
         content = slide_data.get('content', {})
         items = content.get('timeline_items', [])
         if not items:
@@ -223,7 +233,6 @@ class EnhancedPPTGenerator:
         tw = self.slide_width * 0.9
         tl = (self.slide_width - tw) / 2
         ty = Inches(3.0)
-        # FIXED: Use RECTANGLE with very small height instead of LINE
         line = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, tl, ty+Inches(0.5), tw, Inches(0.05))
         line.fill.solid()
         line.fill.fore_color.rgb = RGBColor(79, 129, 189)
@@ -247,8 +256,7 @@ class EnhancedPPTGenerator:
                 dp.font.size = Pt(10)
                 dp.alignment = PP_ALIGN.CENTER
     
-    def _handle_image_layout(self, slide, slide_ Dict[str, Any]):
-        """FIXED: Handle empty strings and invalid paths gracefully"""
+    def _handle_image_layout(self, slide, slide_data):
         content = slide_data.get('content', {})
         img = content.get('image', '')
         if len(slide.shapes) > 1:
@@ -257,12 +265,9 @@ class EnhancedPPTGenerator:
         ih = self.slide_height * 0.55
         lp = (self.slide_width - iw) / 2
         tp = Inches(1.8)
-        
-        # FIXED: Check for empty/invalid image data
         if not img or not isinstance(img, str) or img.strip() == '':
             self._add_image_placeholder(slide, lp, tp, iw, ih, "No image provided")
             return
-        
         try:
             if img.startswith('http://') or img.startswith('https://'):
                 self._add_image_placeholder(slide, lp, tp, iw, ih, "URL images not supported")
@@ -283,17 +288,16 @@ class EnhancedPPTGenerator:
             logger.warning(f"Image placeholder: {e}")
             self._add_image_placeholder(slide, lp, tp, iw, ih, str(e))
     
-    def _add_image_placeholder(self, slide, left, top, width, height, reason: str):
-        """Helper to add image placeholder"""
+    def _add_image_placeholder(self, slide, left, top, width, height, reason):
         ph = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left, top, width, height)
         ph.fill.solid()
         ph.fill.fore_color.rgb = RGBColor(240, 240, 240)
         tf = ph.text_frame
-        tf.text = f"🖼️ Image Placeholder\n({reason})"
+        tf.text = f"Image Placeholder\n({reason})"
         tf.paragraphs[0].font.size = Pt(14)
         tf.paragraphs[0].alignment = PP_ALIGN.CENTER
     
-    def _handle_conclusion_layout(self, slide, slide_ Dict[str, Any]):
+    def _handle_conclusion_layout(self, slide, slide_data):
         content = slide_data.get('content', {})
         if len(slide.shapes) > 1:
             slide.shapes._spTree.remove(slide.shapes[1]._element)
@@ -314,7 +318,7 @@ class EnhancedPPTGenerator:
             p.font.size = Pt(16)
             p.alignment = PP_ALIGN.CENTER
     
-    def _create_error_slide(self, num: int, layout: str, err: str):
+    def _create_error_slide(self, num, layout, err):
         idx = 1 if len(self.prs.slide_layouts) > 1 else 0
         slide = self.prs.slides.add_slide(self.prs.slide_layouts[idx])
         if slide.shapes.title:
