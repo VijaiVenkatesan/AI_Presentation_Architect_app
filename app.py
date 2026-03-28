@@ -344,11 +344,14 @@ def main():
                 st.caption("Print-ready format")
                 if st.button("Export as PDF", type="primary", use_container_width=True):
                     data = export_presentation('pdf', use_template=False)
-                    if 
+                    if data:
                         st.download_button(
-                            label="Download PDF", data=data,
+                            label="Download PDF",
+                            data=data,
                             file_name=f"{st.session_state.presentation_title or 'presentation'}.pdf",
-                            mime="application/pdf", use_container_width=True)
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
             st.markdown('</div>', unsafe_allow_html=True)
 
     st.divider()
