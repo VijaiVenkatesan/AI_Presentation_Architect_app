@@ -3,78 +3,64 @@ from pptx.util import Inches
 import json
 import os
 
-from core.clone_engine import clone_slide, replace_text
+from core.template_parser import detect_layouts
 from core.image_engine import generate_image
 from core.diagram_engine import add_diagram
+from utils.helpers import safe_json_load
 
 
 def generate_ppt(template_file, content_json, output_file="output.pptx"):
 
-    # Load template
     prs = Presentation(template_file)
 
-    # Parse JSON safely
-    try:
-        data = json.loads(content_json)
-    except Exception as e:
-        raise Exception(f"Invalid JSON content: {e}")
-
+    data = safe_json_load(content_json)
     slides_data = data.get("slides", [])
 
-    if not slides_data:
-        raise Exception("No slides data found")
+    layout_map = detect_layouts(prs)
+    total = len(slides_data)
 
-    base_slide_index = 0  # Use first slide as design base
-
-    for idx, slide_data in enumerate(slides_data):
+    for i, slide_data in enumerate(slides_data):
 
         try:
-            # Clone template slide (pixel-level)
-            slide = clone_slide(prs, base_slide_index)
+            # Slide type logic
+            if i == 0:
+                layout = layout_map["title"]
+            elif i == 1:
+                layout = layout_map["content"]
+            elif i == total - 1:
+                layout = layout_map["blank"]
+            else:
+                layout = layout_map["content"]
 
-            # Replace text content
-            replace_text(slide, slide_data)
+            slide = prs.slides.add_slide(layout)
 
-            # -------------------------
-            # 🖼 IMAGE INSERTION
-            # -------------------------
-            img_prompt = slide_data.get("image_prompt")
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    tf = shape.text_frame
+                    tf.clear()
 
-            if img_prompt:
-                try:
-                    img = generate_image(img_prompt)
-                    if img:
-                        img_path = f"temp_{idx}.png"
-                        img.save(img_path)
+                    if "title" in str(shape.placeholder_format.type).lower():
+                        tf.text = slide_data.get("title", "")
+                    else:
+                        for b in slide_data.get("bullet_points", []):
+                            p = tf.add_paragraph()
+                            p.text = b
 
-                        slide.shapes.add_picture(
-                            img_path,
-                            Inches(1),
-                            Inches(4),
-                            width=Inches(4)
-                        )
+            # Image
+            if slide_data.get("image_prompt"):
+                img = generate_image(slide_data["image_prompt"])
+                if img:
+                    path = f"temp_{i}.png"
+                    img.save(path)
+                    slide.shapes.add_picture(path, Inches(1), Inches(4), width=Inches(4))
+                    os.remove(path)
 
-                        os.remove(img_path)
-
-                except Exception as e:
-                    print(f"Image generation failed: {e}")
-
-            # -------------------------
-            # 📊 DIAGRAM INSERTION
-            # -------------------------
-            diagram_type = slide_data.get("diagram_type")
-
-            if diagram_type:
-                try:
-                    add_diagram(slide, diagram_type)
-                except Exception as e:
-                    print(f"Diagram error: {e}")
+            # Diagram
+            if slide_data.get("diagram_type"):
+                add_diagram(slide, slide_data["diagram_type"])
 
         except Exception as e:
-            print(f"Slide {idx} failed: {e}")
-            continue  # Skip bad slide but continue
+            print(f"Slide {i} failed: {e}")
 
-    # Save final PPT
     prs.save(output_file)
-
     return output_file
