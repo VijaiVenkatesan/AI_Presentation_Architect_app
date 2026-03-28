@@ -1,6 +1,5 @@
 import sqlite3
 
-# IMPORTANT: Use /tmp for Streamlit Cloud
 DB_PATH = "/tmp/app.db"
 
 
@@ -12,7 +11,6 @@ def init_db():
     conn = get_connection()
     c = conn.cursor()
 
-    # Create users table
     c.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,7 +19,6 @@ def init_db():
     )
     """)
 
-    # Create projects table
     c.execute("""
     CREATE TABLE IF NOT EXISTS projects (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
