@@ -1,7 +1,14 @@
 import sqlite3
 
+DB_PATH = "/tmp/app.db"  # Important for Streamlit Cloud
+
+
+def get_connection():
+    return sqlite3.connect(DB_PATH)
+
+
 def init_db():
-    conn = sqlite3.connect("app.db")
+    conn = get_connection()
     c = conn.cursor()
 
     c.execute("""
@@ -19,6 +26,19 @@ def init_db():
         content TEXT
     )
     """)
+
+    conn.commit()
+    conn.close()
+
+
+def save_project(user_id, content):
+    conn = get_connection()
+    c = conn.cursor()
+
+    c.execute(
+        "INSERT INTO projects (user_id, content) VALUES (?, ?)",
+        (user_id, content)
+    )
 
     conn.commit()
     conn.close()
