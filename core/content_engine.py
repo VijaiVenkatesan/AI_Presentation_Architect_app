@@ -1,6 +1,9 @@
 from groq import Groq
 import streamlit as st
+import json
+
 from core.search_engine import fetch_search_data
+from utils.helpers import safe_json_load, ensure_slide_structure, validate_slide_count
 
 def generate_content(prompt, model, slide_count):
 
@@ -10,7 +13,15 @@ def generate_content(prompt, model, slide_count):
     final_prompt = f"""
 STRICT JSON ONLY.
 
-Generate {slide_count} enterprise slides for: {prompt}
+Generate {slide_count} enterprise slides.
+
+Structure:
+1 → Title
+2 → Agenda
+3+ → Content
+Last → Summary
+
+Topic: {prompt}
 
 Use real-time data:
 {search_context}
@@ -33,4 +44,10 @@ Format:
         messages=[{"role": "user", "content": final_prompt}],
     )
 
-    return res.choices[0].message.content
+    raw = res.choices[0].message.content
+
+    data = safe_json_load(raw)
+    data = ensure_slide_structure(data)
+    data = validate_slide_count(data)
+
+    return json.dumps(data)
