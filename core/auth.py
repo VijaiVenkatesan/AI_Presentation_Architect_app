@@ -1,44 +1,53 @@
 import sqlite3
+import hashlib
+from core.db import init_db
 
-DB_PATH = "/tmp/app.db"  # Streamlit Cloud safe
+DB_PATH = "/tmp/app.db"
 
 
 def get_connection():
     return sqlite3.connect(DB_PATH)
 
 
-def init_db():
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+def signup(username, password):
+    init_db()  # ensure tables exist
+
     conn = get_connection()
     c = conn.cursor()
 
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE,
-        password TEXT
-    )
-    """)
+    try:
+        c.execute(
+            "INSERT INTO users (username, password) VALUES (?, ?)",
+            (username, hash_password(password))
+        )
+        conn.commit()
+        conn.close()
+        return True, "Signup successful"
 
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS projects (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        content TEXT
-    )
-    """)
-
-    conn.commit()
-    conn.close()
+    except Exception as e:
+        conn.close()
+        return False, str(e)
 
 
-def save_project(user_id, content):
+def login(username, password):
+    init_db()  # ensure tables exist
+
     conn = get_connection()
     c = conn.cursor()
 
     c.execute(
-        "INSERT INTO projects (user_id, content) VALUES (?, ?)",
-        (user_id, content)
+        "SELECT * FROM users WHERE username=? AND password=?",
+        (username, hash_password(password))
     )
 
-    conn.commit()
+    user = c.fetchone()
     conn.close()
+
+    if user:
+        return True, user
+    else:
+        return False, "Invalid username or password"
